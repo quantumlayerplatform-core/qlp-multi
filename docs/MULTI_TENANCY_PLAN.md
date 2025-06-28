@@ -33,15 +33,15 @@ Organization (Tenant)
 - [x] Create tenant schema
 - [x] Add SQLAlchemy models
 - [x] Implement usage tracking tables
-- [ ] Add migration scripts
+- [x] Add migration scripts
 - [ ] Test RLS policies
 
-### Phase 2: Authentication & Authorization
-- [ ] Azure AD B2C configuration
-- [ ] JWT validation middleware
-- [ ] Auth decorators
-- [ ] Permission system
-- [ ] Token management
+### Phase 2: Authentication & Authorization ✅
+- [x] Azure AD B2C configuration
+- [x] JWT validation middleware
+- [x] Auth decorators
+- [x] Permission system
+- [x] Token management
 
 ### Phase 3: Core Services
 - [ ] Tenant service
