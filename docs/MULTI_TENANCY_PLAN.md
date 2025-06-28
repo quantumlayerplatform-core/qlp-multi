@@ -43,12 +43,13 @@ Organization (Tenant)
 - [x] Permission system
 - [x] Token management
 
-### Phase 3: Core Services
-- [ ] Tenant service
+### Phase 3: Core Services (In Progress)
+- [x] Base service class
+- [x] Tenant service
 - [ ] Workspace service
-- [ ] Usage tracking service
-- [ ] Quota enforcement
-- [ ] Audit logging
+- [x] Usage tracking service
+- [x] Domain event system
+- [x] Audit logging
 
 ### Phase 4: API Integration
 - [ ] Auth routes
