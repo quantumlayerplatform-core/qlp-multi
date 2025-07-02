@@ -1,159 +1,340 @@
 # Quantum Layer Platform (QLP)
 
-## 🚀 Overview
+<div align="center">
+  <h3>Transform Natural Language into Production-Ready Code</h3>
+  <p>An AI-powered enterprise software development platform that leverages advanced LLMs to automate the entire software development lifecycle</p>
+</div>
 
-The **Quantum Layer Platform** is an enterprise-grade, AI-powered software development platform that transforms natural language requests into production-ready software through intelligent agent orchestration, continuous learning, and human collaboration.
+---
 
-## 🏗️ Architecture
+## 🌟 Overview
 
-The platform consists of 5 core microservices:
+The Quantum Layer Platform (QLP) is a cutting-edge AI system that transforms natural language requirements into production-ready software. Built with a microservices architecture and powered by state-of-the-art language models, QLP automates code generation, testing, documentation, and deployment.
 
-### 1. **Meta-Orchestrator** (Port 8000)
-- Decomposes natural language requests into atomic tasks
-- Creates intelligent execution plans with dependency management
-- Manages workflow orchestration through the entire pipeline
+### Key Features
 
-### 2. **Agent Factory** (Port 8001)
-- Multi-tier agent system (T0-T3) for different complexity levels
-- Dynamic agent selection based on task requirements
-- Supports multiple LLMs (GPT-3.5, GPT-4, Claude, Llama)
-
-### 3. **Validation Mesh** (Port 8002)
-- Multi-stage validation pipeline
-- 5 validators: Syntax, Style, Security, Type, Runtime
-- Ensemble consensus mechanism with confidence scoring
-
-### 4. **Vector Memory** (Port 8003)
-- Semantic search using Qdrant vector database
-- Learns from past executions to improve future performance
-- Stores code patterns, decisions, and error patterns
-
-### 5. **Execution Sandbox** (Port 8004)
-- Secure Docker-based code execution
-- Multi-language support (Python, JavaScript, Go, Java, Rust)
-- Resource limits and isolation for safety
+- **🤖 Multi-tier AI Agent System**: Intelligently routes tasks to appropriate models (GPT-4, Claude, Llama)
+- **✅ 5-Stage Validation Pipeline**: Ensures code quality through comprehensive validation
+- **📦 Complete Project Generation**: Creates full applications with tests, docs, and deployment configs
+- **🔍 Semantic Code Memory**: Learns from past generations for improved performance
+- **🔒 Enterprise Security**: Production-ready security with sandboxed execution
+- **☁️ Cloud-Native**: Kubernetes-ready with support for AWS, Azure, and GCP
+- **📊 Real-time Monitoring**: Comprehensive observability with Prometheus and Grafana
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.13+
-- Docker
-- Virtual environment
 
-### Installation
+- Python 3.11+
+- Docker & Docker Compose
+- PostgreSQL (or use Docker)
+- Redis (or use Docker)
 
-1. **Activate virtual environment:**
+### Local Development Setup
+
+1. **Clone the repository**
 ```bash
-cd /Users/satish/qlp-projects/qlp-multi
-source venv/bin/activate
+git clone https://github.com/quantumlayerplatform-core/qlp-multi.git
+cd qlp-multi
 ```
 
-2. **Start all services:**
+2. **Set up Python environment**
 ```bash
-./start.sh
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-3. **Verify health:**
+3. **Configure environment**
 ```bash
+cp .env.example .env
+# Edit .env with your Azure OpenAI credentials and other settings
+```
+
+4. **Start with Docker Compose**
+```bash
+docker compose -f docker-compose.platform.yml up -d
+```
+
+5. **Verify installation**
+```bash
+# Check service health
 curl http://localhost:8000/health
-curl http://localhost:8001/health
-curl http://localhost:8002/health
-curl http://localhost:8003/health
-curl http://localhost:8004/health
+
+# Run platform test
+python test_docker_platform.py
 ```
 
-### 🧪 Test the Platform
+### Your First Code Generation
 
-**Simple test:**
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/generate/capsule",
+    json={
+        "request_id": "my-first-project",
+        "tenant_id": "demo",
+        "user_id": "developer",
+        "project_name": "Hello API",
+        "description": "Create a REST API for user management",
+        "requirements": "Include CRUD operations, authentication, and PostgreSQL",
+        "tech_stack": ["Python", "FastAPI", "PostgreSQL"]
+    }
+)
+
+result = response.json()
+print(f"Generated capsule ID: {result['capsule_id']}")
+print(f"Files created: {result['files_generated']}")
+```
+
+## 🏗️ Architecture
+
+QLP uses a microservices architecture with 5 core services:
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│Meta-Orchestrator│────▶│  Agent Factory   │────▶│Validation Mesh  │
+│   (Port 8000)   │     │   (Port 8001)    │     │  (Port 8002)    │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+         │                                                 │
+         ▼                                                 ▼
+┌─────────────────┐                          ┌──────────────────┐
+│  Vector Memory  │                          │Execution Sandbox │
+│   (Port 8003)   │                          │   (Port 8004)    │
+└─────────────────┘                          └──────────────────┘
+```
+
+### Core Services
+
+1. **Meta-Orchestrator**: Request handling and workflow coordination
+2. **Agent Factory**: Multi-tier AI agent management
+3. **Validation Mesh**: Code quality assurance pipeline
+4. **Vector Memory**: Semantic search and learning system
+5. **Execution Sandbox**: Secure code execution environment
+
+## 📋 Features
+
+### Supported Languages
+- Python (FastAPI, Django, Flask)
+- JavaScript/TypeScript (Node.js, React, Vue)
+- Go
+- Java (Spring Boot)
+- C++
+- Rust
+- And more...
+
+### Project Types
+- REST APIs
+- Microservices
+- Web Applications
+- CLI Tools
+- Libraries/Packages
+- Data Pipelines
+- ML Models
+
+### Validation Pipeline
+1. **Syntax Validation**: AST parsing and compilation
+2. **Style Validation**: Code formatting and conventions
+3. **Security Validation**: Vulnerability scanning
+4. **Type Validation**: Static type checking
+5. **Runtime Validation**: Execution testing
+
+## 🐳 Deployment
+
+### Docker Deployment
 ```bash
-python test_quick.py
+# Build and start all services
+docker compose -f docker-compose.platform.yml up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f orchestrator
 ```
 
-**Integration test:**
+### Kubernetes Deployment
 ```bash
-python test_integration.py
+# Create namespace
+kubectl create namespace qlp
+
+# Apply manifests
+kubectl apply -f deployments/kubernetes/
+
+# Check pods
+kubectl get pods -n qlp
+
+# Port forward for access
+kubectl port-forward svc/orchestrator 8000:8000 -n qlp
 ```
 
-**Sandbox test:**
+### Cloud Deployment
+
+#### Azure (AKS)
 ```bash
-python test_sandbox.py
+# Create AKS cluster
+az aks create --resource-group qlp-rg --name qlp-cluster
+
+# Deploy platform
+kubectl apply -f deployments/kubernetes/
 ```
 
-## 📊 API Examples
+#### AWS (EKS)
+```bash
+# Create EKS cluster
+eksctl create cluster --name qlp-cluster
 
-### Generate Code from Natural Language
+# Deploy platform
+kubectl apply -f deployments/kubernetes/
+```
+
+## 📚 API Documentation
+
+### REST API
+
+Base URL: `http://localhost:8000`
+
+#### Generate Code Capsule
+```http
+POST /generate/capsule
+Content-Type: application/json
+
+{
+  "request_id": "unique-request-id",
+  "tenant_id": "organization-id",
+  "user_id": "user-id",
+  "project_name": "My Project",
+  "description": "Project description",
+  "requirements": "Detailed requirements",
+  "tech_stack": ["Python", "FastAPI"],
+  "constraints": ["Must use PostgreSQL", "Include tests"]
+}
+```
+
+#### Export Capsule
+```http
+POST /capsule/{capsule_id}/export/{format}
+
+Formats: ZIP, TAR, TAR.GZ
+```
+
+#### Create Version
+```http
+POST /capsule/{capsule_id}/version
+Content-Type: application/json
+
+{
+  "author": "developer@example.com",
+  "message": "Added new feature",
+  "changes": { ... }
+}
+```
+
+Full API documentation available at: `http://localhost:8000/docs`
+
+## 🧪 Testing
 
 ```bash
-curl -X POST http://localhost:8000/test/decompose \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "Create a Python function to calculate fibonacci numbers",
-    "tenant_id": "default",
-    "user_id": "test"
-  }'
+# Run all tests
+make test
+
+# Run specific test suites
+make test-unit        # Unit tests
+make test-integration # Integration tests
+make test-e2e        # End-to-end tests
+
+# Run with coverage
+pytest --cov=src tests/
 ```
 
-### Execute Code in Sandbox
+## 📊 Monitoring
+
+- **Metrics**: Prometheus metrics at `/metrics`
+- **Health**: Health check at `/health`
+- **Logs**: Structured JSON logging
+- **Tracing**: OpenTelemetry integration
+
+## 🔧 Configuration
+
+Key environment variables:
 
 ```bash
-curl -X POST http://localhost:8004/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "def hello(): return \"Hello from Quantum Layer Platform!\"\nprint(hello())",
-    "language": "python"
-  }'
+# Azure OpenAI (Primary LLM)
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
+
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/qlp
+REDIS_URL=redis://localhost:6379
+
+# Services
+TEMPORAL_HOST=localhost:7233
+QDRANT_URL=http://localhost:6333
 ```
 
-## 🎯 Key Features
+## 🤝 Contributing
 
-- **Natural Language Understanding**: Converts requirements to code
-- **Multi-Tier AI Agents**: From simple to meta-cognitive agents
-- **Secure Execution**: Docker-based isolation
-- **Continuous Learning**: Improves with every execution
-- **Enterprise Ready**: Multi-tenant, scalable architecture
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
-## 📚 Service Documentation
+### Development Workflow
 
-Each service has interactive API documentation:
-- Orchestrator: http://localhost:8000/docs
-- Agent Factory: http://localhost:8001/docs
-- Validation Mesh: http://localhost:8002/docs
-- Vector Memory: http://localhost:8003/docs
-- Execution Sandbox: http://localhost:8004/docs
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 🛠️ Development
+## 📖 Documentation
 
-### Stop all services:
-```bash
-./stop_platform.sh
-```
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Capabilities Guide](docs/CAPABILITIES.md)
+- [Design Decisions](docs/DESIGN_DECISIONS.md)
+- [API Reference](http://localhost:8000/docs)
+- [Deployment Guide](docs/deployment/)
 
-### Restart all services:
-```bash
-./restart_all.sh
-```
+## 🛣️ Roadmap
 
-### View logs:
-```bash
-tail -f logs/*.log
-```
+### Current Release (v1.0)
+- ✅ Core microservices architecture
+- ✅ Multi-tier agent system
+- ✅ 5-stage validation pipeline
+- ✅ Vector memory system
+- ✅ Docker & Kubernetes support
 
-## 🏆 Platform Capabilities
+### Upcoming (v2.0)
+- [ ] Web UI for visual interaction
+- [ ] Real-time collaboration features
+- [ ] Advanced debugging tools
+- [ ] Plugin system
+- [ ] Mobile app generation
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Java, Rust
-- **AI Models**: GPT-3.5, GPT-4, Claude, Llama
-- **Agent Tiers**: T0 (simple), T1 (context-aware), T2 (reasoning), T3 (meta-agents)
-- **Validation**: Syntax, Style, Security, Type checking, Runtime
-- **Learning**: Semantic search and pattern recognition
+### Future
+- [ ] Multi-modal inputs (diagrams to code)
+- [ ] Self-healing code
+- [ ] Custom model fine-tuning
+- [ ] Marketplace for templates
 
-## 📈 Architecture Benefits
+## 📄 License
 
-1. **Microservices**: Independent scaling and deployment
-2. **AI-Powered**: Leverages best-in-class language models
-3. **Secure**: Sandboxed execution environment
-4. **Learning System**: Gets smarter with usage
-5. **Extensible**: Easy to add new capabilities
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- OpenAI for GPT-4
+- Anthropic for Claude
+- The open-source community
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/quantumlayerplatform-core/qlp-multi/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/quantumlayerplatform-core/qlp-multi/discussions)
+- **Email**: support@quantumlayer.ai
 
 ---
 
-Built with ❤️ by the Quantum Layer Platform team
+<div align="center">
+  <p>Built with ❤️ by the Quantum Layer Platform team</p>
+  <p>⭐ Star us on GitHub!</p>
+</div>
