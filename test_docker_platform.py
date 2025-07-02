@@ -65,10 +65,10 @@ def test_capsule_generation():
             print(f"   Files: {result.get('file_count', 0)}")
             print(f"   Confidence: {result.get('confidence_score', 0):.2f}")
             
-            # Show generated files
-            if result.get('files'):
+            # Show generated files from source_code
+            if result.get('source_code'):
                 print("\n📄 Generated files:")
-                for file_path, content in result['files'].items():
+                for file_path, content in result['source_code'].items():
                     print(f"\n   {file_path}:")
                     print("   " + "-" * 40)
                     for line in content.split('\n')[:10]:  # Show first 10 lines
@@ -101,8 +101,7 @@ def test_capsule_export(capsule_id):
         try:
             print(f"\n🗜️  Testing {format} export...")
             response = requests.post(
-                f"http://localhost:8000/export/capsule/{capsule_id}",
-                json={"format": format},
+                f"http://localhost:8000/capsule/{capsule_id}/export/{format}",
                 timeout=30
             )
             
