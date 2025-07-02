@@ -21,6 +21,8 @@ from temporalio.worker import Worker
 import structlog
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
+from fastapi import Query
+from sqlalchemy.orm import Session
 
 from src.common.models import (
     ExecutionRequest,
@@ -34,6 +36,7 @@ from src.common.models import (
     HITLResponse
 )
 from src.common.config import settings
+from src.common.database import get_db
 from src.memory.client import VectorMemoryClient
 from src.agents.client import AgentFactoryClient
 from src.validation.client import ValidationMeshClient
@@ -74,6 +77,35 @@ validation_client = ValidationMeshClient(settings.VALIDATION_MESH_URL)
 
 # In-memory storage for HITL requests (in production, use a database)
 hitl_requests: Dict[str, Dict[str, Any]] = {}
+
+
+# Request models for capsule versioning
+class CreateVersionRequest(BaseModel):
+    author: str = "system"
+    message: str = ""
+    changes: List[Dict[str, Any]] = []
+    parent_version: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+
+class CreateBranchRequest(BaseModel):
+    branch_name: str
+    from_version: Optional[str] = None
+    author: str = "system"
+
+
+class MergeVersionsRequest(BaseModel):
+    source_version: str
+    target_version: str
+    author: str = "system"
+    message: Optional[str] = None
+    strategy: str = "three-way"
+
+
+# Import delivery config model and storage services
+from src.orchestrator.capsule_delivery import DeliveryConfig, get_delivery_service
+from src.orchestrator.capsule_storage import get_capsule_storage
+from src.common.database import get_db
 
 
 @dataclass
@@ -649,7 +681,12 @@ async def create_hitl_request(request: Dict[str, Any]):
 async def get_hitl_status(request_id: str):
     """Get status of a HITL request"""
     if request_id not in hitl_requests:
-        raise HTTPException(status_code=404, detail="HITL request not found")
+        # Return a proper response for missing requests
+        return {
+            "request_id": request_id,
+            "status": "not_found",
+            "message": "HITL request not found or has been processed"
+        }
     
     request_data = hitl_requests[request_id]
     
@@ -734,10 +771,11 @@ async def get_pending_hitl_requests(priority: Optional[str] = None):
 
 
 @app.post("/generate/capsule")
-async def generate_enhanced_capsule(request: ExecutionRequest):
+async def generate_enhanced_capsule(request: ExecutionRequest, db: Session = Depends(get_db)):
     """Generate an enhanced QLCapsule with complete project structure"""
     try:
         from src.orchestrator.enhanced_capsule import EnhancedCapsuleGenerator, save_capsule_to_disk
+        from src.orchestrator.capsule_storage import get_capsule_storage
         
         generator = EnhancedCapsuleGenerator()
         
@@ -745,6 +783,11 @@ async def generate_enhanced_capsule(request: ExecutionRequest):
         
         # Generate the capsule
         capsule = await generator.generate_capsule(request, use_advanced=True)
+        
+        # Store capsule in database
+        storage_service = get_capsule_storage(db)
+        capsule_id = await storage_service.store_capsule(capsule, request)
+        logger.info(f"Stored capsule in database: {capsule_id}")
         
         # Optionally save to disk
         save_to_disk = request.metadata.get("save_to_disk", False)
@@ -779,15 +822,30 @@ async def generate_enhanced_capsule(request: ExecutionRequest):
 
 
 @app.get("/capsule/{capsule_id}")
-async def get_capsule_details(capsule_id: str):
+async def get_capsule_details(capsule_id: str, db: Session = Depends(get_db)):
     """Get details of a generated QLCapsule"""
     try:
-        # In production, retrieve from storage
-        # For now, return a placeholder
+        from src.orchestrator.capsule_storage import get_capsule_storage
+        
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        # Convert to JSON-serializable format
         return {
-            "capsule_id": capsule_id,
-            "status": "generated",
-            "message": "Capsule details would be retrieved from storage"
+            "capsule_id": capsule.id,
+            "request_id": capsule.request_id,
+            "status": "stored",
+            "manifest": capsule.manifest,
+            "source_code": capsule.source_code,
+            "tests": capsule.tests,
+            "documentation": capsule.documentation,
+            "validation_report": capsule.validation_report.model_dump() if capsule.validation_report else None,
+            "deployment_config": capsule.deployment_config,
+            "metadata": capsule.metadata,
+            "created_at": capsule.created_at.isoformat() if capsule.created_at else None
         }
         
     except Exception as e:
@@ -861,6 +919,536 @@ async def generate_robust_capsule(request: ExecutionRequest):
     except Exception as e:
         logger.error(f"Robust capsule generation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Enhanced Capsule Delivery Endpoints
+@app.post("/capsule/{capsule_id}/deliver")
+async def deliver_capsule(
+    capsule_id: str,
+    delivery_configs: List[DeliveryConfig],
+    version_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Deliver capsule to multiple destinations"""
+    try:
+        # Get capsule from storage
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        # Get delivery service with database session
+        delivery_service = get_delivery_service(db)
+        
+        # Deliver to all configured destinations
+        results = await delivery_service.deliver(capsule, delivery_configs, version_id)
+        
+        # Create delivery report
+        report = await delivery_service.create_delivery_report(capsule_id, results)
+        
+        return JSONResponse(content=report)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Capsule delivery failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/capsule/{capsule_id}/stream")
+async def stream_capsule(
+    capsule_id: str,
+    format: str = "tar.gz",
+    chunk_size: int = 8192,
+    db: Session = Depends(get_db)
+):
+    """Stream capsule as archive"""
+    try:
+        from fastapi.responses import StreamingResponse
+        from src.orchestrator.capsule_export import CapsuleStreamer
+        
+        # Get capsule from storage
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        streamer = CapsuleStreamer()
+        
+        # Determine content type
+        content_type = {
+            "tar.gz": "application/gzip",
+            "tar": "application/x-tar",
+            "zip": "application/zip"
+        }.get(format, "application/octet-stream")
+        
+        # Stream the capsule
+        return StreamingResponse(
+            streamer.stream_capsule(capsule, format, chunk_size),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=capsule-{capsule_id}.{format}"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Capsule streaming failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/capsule/{capsule_id}/export/{format}")
+async def export_capsule(
+    capsule_id: str,
+    format: str,
+    db: Session = Depends(get_db)
+):
+    """Export capsule in specific format"""
+    try:
+        from src.orchestrator.capsule_export import CapsuleExporter
+        from fastapi.responses import Response
+        
+        # Get capsule from storage
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        exporter = CapsuleExporter()
+        
+        if format == "zip":
+            data = await exporter.export_as_zip(capsule)
+            return Response(
+                content=data,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f"attachment; filename=capsule-{capsule_id}.zip"
+                }
+            )
+        elif format == "helm":
+            helm_chart = await exporter.export_as_helm_chart(capsule)
+            return JSONResponse(content=helm_chart)
+        elif format in ["tar", "tar.gz"]:
+            data = await exporter.export_as_tar(capsule)
+            return Response(
+                content=data,
+                media_type="application/x-tar" if format == "tar" else "application/gzip",
+                headers={
+                    "Content-Disposition": f"attachment; filename=capsule-{capsule_id}.{format}"
+                }
+            )
+        elif format == "terraform":
+            tf_files = await exporter.export_as_terraform(capsule)
+            return JSONResponse(content=tf_files)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Capsule export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsule/{capsule_id}/sign")
+async def sign_capsule(
+    capsule_id: str,
+    private_key: str = Query(..., description="Private key for signing"),
+    db: Session = Depends(get_db)
+):
+    """Digitally sign a capsule"""
+    try:
+        # Get capsule from storage
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        delivery_service = get_delivery_service(db)
+        signature = delivery_service.sign_capsule(capsule, private_key)
+        
+        return {
+            "capsule_id": capsule_id,
+            "signature": signature,
+            "algorithm": "HMAC-SHA256",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Capsule signing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsule/batch/export")
+async def batch_export_capsules(
+    capsule_ids: List[str],
+    format: str = "zip"
+):
+    """Export multiple capsules as a batch"""
+    try:
+        from src.orchestrator.capsule_export import CapsuleExporter
+        import tempfile
+        
+        exporter = CapsuleExporter()
+        results = []
+        
+        for capsule_id in capsule_ids:
+            try:
+                # Mock capsule - in production, retrieve from storage
+                from src.common.models import QLCapsule
+                capsule = QLCapsule(
+                    id=capsule_id,
+                    request_id="mock-request",
+                    manifest={},
+                    source_code={"main.py": f"# Capsule {capsule_id}"},
+                    tests={},
+                    documentation=f"# Capsule {capsule_id}",
+                    metadata={}
+                )
+                
+                if format == "zip":
+                    data = await exporter.export_as_zip(capsule)
+                    # In production, save to storage and return URL
+                    results.append({
+                        "capsule_id": capsule_id,
+                        "status": "success",
+                        "size": len(data),
+                        "url": f"/capsule/{capsule_id}/download"
+                    })
+                else:
+                    results.append({
+                        "capsule_id": capsule_id,
+                        "status": "error",
+                        "error": f"Unsupported format: {format}"
+                    })
+                    
+            except Exception as e:
+                results.append({
+                    "capsule_id": capsule_id,
+                    "status": "error",
+                    "error": str(e)
+                })
+        
+        return {
+            "total": len(capsule_ids),
+            "successful": sum(1 for r in results if r["status"] == "success"),
+            "failed": sum(1 for r in results if r["status"] == "error"),
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Batch export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Capsule Versioning Endpoints
+@app.post("/capsule/{capsule_id}/version")
+async def create_capsule_version(
+    capsule_id: str,
+    request: CreateVersionRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new version of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        # Get capsule from storage
+        storage_service = get_capsule_storage(db)
+        capsule = await storage_service.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        
+        # Check if this is the first version (initial creation)
+        history = version_manager.histories.get(capsule_id)
+        if not history:
+            # Create initial version for new capsule
+            version = await version_manager.create_initial_version(
+                capsule=capsule,
+                author=request.author,
+                message=request.message or "Initial version"
+            )
+        else:
+            # Create new version
+            version = await version_manager.create_version(
+                capsule=capsule,
+                parent_version_id=request.parent_version,
+                author=request.author,
+                message=request.message
+            )
+        
+        return {
+            "version_id": version.version_id,
+            "capsule_id": capsule_id,
+            "parent_version": version.parent_version,
+            "author": version.author,
+            "message": version.message,
+            "timestamp": version.timestamp.isoformat(),
+            "changes_count": len(version.changes)
+        }
+        
+    except Exception as e:
+        logger.error(f"Version creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/capsule/{capsule_id}/version/{version_id}")
+async def get_capsule_version(
+    capsule_id: str,
+    version_id: str
+):
+    """Get specific version of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        version = await version_manager.get_version(capsule_id, version_id)
+        
+        if not version:
+            raise HTTPException(status_code=404, detail="Version not found")
+            
+        return {
+            "version_id": version.version_id,
+            "capsule_id": capsule_id,
+            "parent_version": version.parent_version,
+            "author": version.author,
+            "message": version.message,
+            "timestamp": version.timestamp.isoformat(),
+            "changes": version.changes,
+            "capsule_hash": version.capsule_hash,
+            "tags": version.tags,
+            "metadata": version.metadata
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Version retrieval failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/capsule/{capsule_id}/history")
+async def get_capsule_history(
+    capsule_id: str,
+    branch: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100)
+):
+    """Get version history of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        history = await version_manager.get_history(capsule_id, branch, limit)
+        
+        return {
+            "capsule_id": capsule_id,
+            "branch": branch or "main",
+            "total_versions": len(history),
+            "versions": [
+                {
+                    "version_id": v.version_id,
+                    "author": v.author,
+                    "message": v.message,
+                    "timestamp": v.timestamp.isoformat(),
+                    "parent_version": v.parent_version,
+                    "tags": v.tags
+                }
+                for v in history
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"History retrieval failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsule/{capsule_id}/branch")
+async def create_capsule_branch(
+    capsule_id: str,
+    request: CreateBranchRequest
+):
+    """Create a new branch for capsule development"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        
+        from_version = await version_manager.create_branch(
+            capsule_id=capsule_id,
+            branch_name=request.branch_name,
+            from_version=request.from_version
+        )
+        
+        return {
+            "branch_name": request.branch_name,
+            "version_id": from_version,
+            "capsule_id": capsule_id,
+            "created_from": request.from_version,
+            "author": request.author,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Branch creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsule/{capsule_id}/merge")
+async def merge_capsule_versions(
+    capsule_id: str,
+    request: MergeVersionsRequest
+):
+    """Merge two versions of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        merged_version = await version_manager.merge_versions(
+            capsule_id=capsule_id,
+            source_version=request.source_version,
+            target_version=request.target_version,
+            author=request.author,
+            message=request.message
+        )
+        
+        return {
+            "version_id": merged_version.version_id,
+            "capsule_id": capsule_id,
+            "source_version": request.source_version,
+            "target_version": request.target_version,
+            "author": merged_version.author,
+            "message": merged_version.message,
+            "timestamp": merged_version.timestamp.isoformat(),
+            "changes_count": len(merged_version.changes)
+        }
+        
+    except Exception as e:
+        logger.error(f"Version merge failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsule/{capsule_id}/tag")
+async def tag_capsule_version(
+    capsule_id: str,
+    version_id: str,
+    tag: str,
+    author: str
+):
+    """Tag a specific version of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        await version_manager.tag_version(
+            capsule_id=capsule_id,
+            version_id=version_id,
+            tag=tag
+        )
+            
+        return {
+            "capsule_id": capsule_id,
+            "version_id": version_id,
+            "tag": tag,
+            "author": author,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Version tagging failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/capsule/{capsule_id}/diff")
+async def get_capsule_diff(
+    capsule_id: str,
+    from_version: str,
+    to_version: str
+):
+    """Get diff between two versions of a capsule"""
+    try:
+        from src.orchestrator.capsule_versioning import CapsuleVersionManager
+        from pathlib import Path
+        
+        storage_path = Path("./capsule_versions")
+        version_manager = CapsuleVersionManager(storage_path)
+        diff = await version_manager.get_diff(
+            capsule_id=capsule_id,
+            version1=from_version,
+            version2=to_version
+        )
+        
+        return {
+            "capsule_id": capsule_id,
+            "from_version": from_version,
+            "to_version": to_version,
+            "changes": diff
+        }
+        
+    except Exception as e:
+        logger.error(f"Diff generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/delivery/providers")
+async def list_delivery_providers():
+    """List available delivery providers"""
+    return {
+        "providers": [
+            {
+                "name": "s3",
+                "description": "Amazon S3 storage",
+                "required_credentials": ["access_key_id", "secret_access_key"],
+                "options": ["region", "prefix", "format"]
+            },
+            {
+                "name": "azure",
+                "description": "Azure Blob Storage",
+                "required_credentials": ["connection_string"],
+                "options": ["prefix", "format"]
+            },
+            {
+                "name": "gcs",
+                "description": "Google Cloud Storage",
+                "required_credentials": ["project_id", "service_account_json"],
+                "options": ["prefix", "format"]
+            },
+            {
+                "name": "github",
+                "description": "GitHub repository",
+                "required_credentials": ["token"],
+                "options": ["branch", "create_pr", "private"]
+            },
+            {
+                "name": "gitlab",
+                "description": "GitLab repository",
+                "required_credentials": ["token", "url"],
+                "options": ["branch", "create_mr", "private"]
+            }
+        ]
+    }
 
 
 # Worker setup

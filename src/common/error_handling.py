@@ -42,8 +42,8 @@ class CircuitState(str, Enum):
     HALF_OPEN = "half_open"  # Testing if service recovered
 
 
-class ServiceError(Exception):
-    """Base exception for service errors"""
+class QLPError(Exception):
+    """Base exception for QLP errors"""
     def __init__(self, message: str, severity: ErrorSeverity = ErrorSeverity.MEDIUM, 
                  service: Optional[str] = None, details: Optional[Dict] = None):
         super().__init__(message)
@@ -51,6 +51,11 @@ class ServiceError(Exception):
         self.service = service
         self.details = details or {}
         self.timestamp = datetime.utcnow()
+
+
+class ServiceError(QLPError):
+    """Base exception for service errors"""
+    pass
 
 
 class RetryableError(ServiceError):
@@ -375,6 +380,33 @@ error_handler = ErrorHandler()
 # Convenience decorators
 with_retry = error_handler.with_retry
 with_circuit_breaker = error_handler.with_circuit_breaker
+
+
+def handle_errors(func):
+    """Simple decorator for basic error handling and logging"""
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            error_handler.handle_error(
+                e,
+                service=func.__name__,
+                raise_after=True
+            )
+    
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_handler.handle_error(
+                e,
+                service=func.__name__,
+                raise_after=True
+            )
+    
+    return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
 
 # Example usage patterns

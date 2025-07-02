@@ -23,6 +23,9 @@ fi
 # Set Python path to the project root
 export PYTHONPATH=/Users/satish/qlp-projects/qlp-multi:$PYTHONPATH
 
+# Override DATABASE_URL to use port 15432
+export DATABASE_URL="postgresql://qlp_user:qlp_password@127.0.0.1:15432/qlp_db"
+
 # Stop any existing services
 echo "🧹 Cleaning up existing services..."
 ./stop_platform.sh 2>/dev/null || true

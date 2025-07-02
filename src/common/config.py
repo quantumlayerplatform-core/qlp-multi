@@ -46,9 +46,15 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://qlp:qlp@localhost:5432/qlp",
+        default="postgresql+asyncpg://qlp:qlp@localhost:15432/qlp",
         description="PostgreSQL connection URL"
     )
+    POSTGRES_HOST: str = Field(default="localhost")
+    POSTGRES_PORT: int = Field(default=15432)
+    POSTGRES_DB: str = Field(default="qlp_test")
+    POSTGRES_USER: str = Field(default="test_user")
+    POSTGRES_PASSWORD: str = Field(default="test_password")
+    
     REDIS_URL: str = Field(
         default="redis://localhost:6379/0",
         description="Redis connection URL"
