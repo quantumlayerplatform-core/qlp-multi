@@ -481,7 +481,7 @@ class MCPServer:
     
     def _load_active_genomes(self) -> Dict[str, Any]:
         """Load active prompt genomes"""
-        genome_path = Path("/Users/satish/qlp-projects/qlp-multi/data/prompt_genomes")
+        genome_path = Path("/app/data/prompt_genomes")
         genomes = {}
         
         if genome_path.exists():

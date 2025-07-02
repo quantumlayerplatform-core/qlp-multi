@@ -106,14 +106,15 @@ class SandboxManager:
     """Manages Docker containers for code execution"""
     
     def __init__(self):
+        self.client = None
         try:
             self.client = docker.from_env()
             logger.info("Docker client initialized successfully")
             # Test connection
             self.client.ping()
         except Exception as e:
-            logger.error(f"Failed to initialize Docker client: {e}")
-            raise RuntimeError("Docker is not available. Please ensure Docker is running.")
+            logger.warning(f"Docker client initialization failed: {e}")
+            logger.warning("Sandbox service will run with limited functionality")
     
     async def execute_code(
         self,
@@ -127,6 +128,15 @@ class SandboxManager:
         
         execution_id = str(uuid.uuid4())
         start_time = time.time()
+        
+        # Check if Docker is available
+        if not self.client:
+            return ExecutionResult(
+                execution_id=execution_id,
+                status=ExecutionStatus.FAILED,
+                error="Docker is not available",
+                execution_time=0
+            )
         
         # Validate language
         if language not in LANGUAGE_IMAGES:
@@ -348,7 +358,7 @@ async def lifespan(app: FastAPI):
         logger.info("Sandbox manager initialized")
     except Exception as e:
         logger.error(f"Failed to initialize sandbox manager: {e}")
-        raise
+        # Don't raise - allow service to start without Docker
     
     yield
     

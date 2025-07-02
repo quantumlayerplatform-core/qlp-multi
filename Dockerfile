@@ -41,8 +41,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=qlp:qlp . .
 
 # Create directories for runtime
-RUN mkdir -p /app/logs /app/capsule_versions && \
-    chown -R qlp:qlp /app/logs /app/capsule_versions
+RUN mkdir -p /app/logs /app/capsule_versions /app/data/prompt_genomes && \
+    chown -R qlp:qlp /app/logs /app/capsule_versions /app/data
 
 # Switch to non-root user
 USER qlp

@@ -38,7 +38,7 @@ class MetaPromptEngineer:
     
     def __init__(self, genome_storage_path: Optional[str] = None):
         self.principle_library = PrincipleLibrary()
-        self.genome_storage_path = genome_storage_path or "/Users/satish/qlp-projects/qlp-multi/data/prompt_genomes"
+        self.genome_storage_path = genome_storage_path or "/app/data/prompt_genomes"
         self.memory_client = None
         self._ensure_storage_exists()
         self.active_genomes: Dict[str, PromptGenome] = {}

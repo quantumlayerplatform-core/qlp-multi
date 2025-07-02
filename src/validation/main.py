@@ -51,8 +51,20 @@ app.add_middleware(
 )
 
 
-# Initialize Docker client
-docker_client = docker.from_env()
+# Docker client initialization
+docker_client = None
+
+def get_docker_client():
+    """Get Docker client with proper error handling"""
+    global docker_client
+    if docker_client is None:
+        try:
+            docker_client = docker.from_env()
+        except Exception as e:
+            logger.warning(f"Docker client initialization failed: {e}")
+            # Return None to allow service to run without Docker
+            return None
+    return docker_client
 
 
 class Validator:
@@ -504,8 +516,12 @@ async def health_check():
     """Health check endpoint"""
     try:
         # Check Docker connection
-        docker_client.ping()
-        docker_status = "connected"
+        client = get_docker_client()
+        if client:
+            client.ping()
+            docker_status = "connected"
+        else:
+            docker_status = "not available"
     except:
         docker_status = "disconnected"
     

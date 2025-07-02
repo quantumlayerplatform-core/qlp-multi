@@ -55,7 +55,7 @@ services:
     ports:
       - "7233:7233"
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=qlp_user
       - POSTGRES_PWD=qlp_password
@@ -84,6 +84,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-orchestrator
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: orchestrator
       PORT: 8000
@@ -96,7 +98,7 @@ services:
       REDIS_PORT: 6379
       TEMPORAL_HOST: temporal
       TEMPORAL_PORT: 7233
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
@@ -123,6 +125,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-agent-factory
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: agent-factory
       PORT: 8001
@@ -150,13 +154,17 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-validation-mesh
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: validation-mesh
       PORT: 8002
+      DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
     ports:
       - "8002:8002"
     volumes:
       - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - qlp-network
 
@@ -165,11 +173,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-vector-memory
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: vector-memory
       PORT: 8003
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
+      QDRANT_URL: http://qdrant:6333
       REDIS_HOST: redis
       REDIS_PORT: 6379
     ports:
@@ -187,6 +198,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-execution-sandbox
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: execution-sandbox
       PORT: 8004
@@ -204,10 +217,13 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: qlp-temporal-worker
+    env_file:
+      - .env
     environment:
       SERVICE_NAME: temporal-worker
       TEMPORAL_HOST: temporal
       TEMPORAL_PORT: 7233
+      DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: qlp_user

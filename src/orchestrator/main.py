@@ -1167,7 +1167,7 @@ async def create_capsule_version(
         if not capsule:
             raise HTTPException(status_code=404, detail="Capsule not found")
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         
         # Check if this is the first version (initial creation)
@@ -1213,7 +1213,7 @@ async def get_capsule_version(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         version = await version_manager.get_version(capsule_id, version_id)
         
@@ -1251,7 +1251,7 @@ async def get_capsule_history(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         history = await version_manager.get_history(capsule_id, branch, limit)
         
@@ -1287,7 +1287,7 @@ async def create_capsule_branch(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         
         from_version = await version_manager.create_branch(
@@ -1320,7 +1320,7 @@ async def merge_capsule_versions(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         merged_version = await version_manager.merge_versions(
             capsule_id=capsule_id,
@@ -1358,7 +1358,7 @@ async def tag_capsule_version(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         await version_manager.tag_version(
             capsule_id=capsule_id,
@@ -1392,7 +1392,7 @@ async def get_capsule_diff(
         from src.orchestrator.capsule_versioning import CapsuleVersionManager
         from pathlib import Path
         
-        storage_path = Path("./capsule_versions")
+        storage_path = Path("/app/capsule_versions")
         version_manager = CapsuleVersionManager(storage_path)
         diff = await version_manager.get_diff(
             capsule_id=capsule_id,
