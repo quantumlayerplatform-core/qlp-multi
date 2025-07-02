@@ -20,6 +20,14 @@ from src.common.models import (
     TaskStatus
 )
 from src.common.config import settings
+from src.common.error_handling import (
+    error_handler,
+    RetryableError,
+    NonRetryableError,
+    ErrorSeverity,
+    with_retry,
+    with_circuit_breaker
+)
 from src.memory.client import VectorMemoryClient
 from src.sandbox.client import SandboxServiceClient
 from src.agents.azure_llm_client import llm_client, get_model_for_tier, LLMProvider
@@ -53,6 +61,8 @@ class T0Agent(Agent):
     def __init__(self, agent_id: str):
         super().__init__(agent_id, AgentTier.T0)
         
+    @with_circuit_breaker("llm_service", failure_threshold=3, recovery_timeout=30)
+    @with_retry(max_attempts=3, service="t0_agent", exceptions=(RetryableError, ConnectionError, TimeoutError))
     async def execute(self, task: Task, context: Dict[str, Any]) -> TaskResult:
         logger.info(f"T0 Agent executing task", task_id=task.id, agent_id=self.agent_id)
         
@@ -65,22 +75,47 @@ class T0Agent(Agent):
             # Get appropriate model for T0 tier
             model, provider = get_model_for_tier("T0")
             
-            # Use unified LLM client
-            response = await llm_client.chat_completion(
-                messages=[
-                    {"role": "system", "content": "You are a code generation assistant. Be concise and direct."},
-                    {"role": "user", "content": prompt}
-                ],
-                model=model,
-                provider=provider,
-                temperature=0.3,
-                max_tokens=2000,
-                timeout=30.0
-            )
+            # Use unified LLM client with enhanced error handling
+            try:
+                response = await llm_client.chat_completion(
+                    messages=[
+                        {"role": "system", "content": "You are a code generation assistant. Be concise and direct."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model=model,
+                    provider=provider,
+                    temperature=0.3,
+                    max_tokens=2000,
+                    timeout=30.0
+                )
+            except (ConnectionError, TimeoutError) as e:
+                # These are retryable errors
+                logger.warning(f"Retryable error in T0 agent", error=str(e), task_id=task.id)
+                raise RetryableError(f"LLM service temporarily unavailable: {str(e)}", 
+                                   severity=ErrorSeverity.MEDIUM,
+                                   service="llm_client",
+                                   details={"model": model, "provider": provider.value})
+            except Exception as e:
+                # Non-retryable errors
+                if "rate_limit" in str(e).lower():
+                    raise RetryableError(f"Rate limit hit: {str(e)}", 
+                                       severity=ErrorSeverity.MEDIUM,
+                                       service="llm_client")
+                else:
+                    raise NonRetryableError(f"LLM error: {str(e)}", 
+                                          severity=ErrorSeverity.HIGH,
+                                          service="llm_client",
+                                          details={"model": model, "provider": provider.value})
             
             output = response["content"]
             
             execution_time = (datetime.utcnow() - start_time).total_seconds()
+            
+            logger.info(f"T0 Agent completed task", 
+                       task_id=task.id, 
+                       execution_time=execution_time,
+                       model=model,
+                       provider=provider.value)
             
             return TaskResult(
                 task_id=task.id,
@@ -90,20 +125,34 @@ class T0Agent(Agent):
                 execution_time=execution_time,
                 agent_tier_used=self.tier,
                 confidence_score=0.7,  # T0 agents have lower confidence
-                metadata={"agent_id": self.agent_id}
+                metadata={
+                    "agent_id": self.agent_id,
+                    "model": model,
+                    "provider": provider.value
+                }
             )
             
+        except (RetryableError, NonRetryableError):
+            # Re-raise our custom errors
+            raise
         except Exception as e:
-            logger.error(f"T0 Agent execution failed", error=str(e))
+            # Catch any unexpected errors
+            error_details = error_handler.handle_error(
+                e,
+                service="t0_agent",
+                context={"task_id": task.id, "agent_id": self.agent_id},
+                raise_after=False
+            )
+            
             return TaskResult(
                 task_id=task.id,
                 status=TaskStatus.FAILED,
                 output_type="error",
-                output={"error": str(e)},
+                output={"error": str(e), "details": error_details},
                 execution_time=(datetime.utcnow() - start_time).total_seconds(),
                 agent_tier_used=self.tier,
                 confidence_score=0.0,
-                metadata={"agent_id": self.agent_id}
+                metadata={"agent_id": self.agent_id, "error": error_details}
             )
     
     def _build_prompt(self, task: Task, context: Dict[str, Any]) -> str:

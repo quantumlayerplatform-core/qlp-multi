@@ -62,6 +62,12 @@ class EnhancedCapsuleGenerator:
             )
             # Convert to GenerationResult format
             from src.agents.advanced_generation import GenerationResult
+            
+            # Check if basic_result is None
+            if basic_result is None:
+                logger.error("Basic result is None, using defaults")
+                basic_result = {}
+            
             generation_result = GenerationResult(
                 code=basic_result.get("code", ""),
                 tests=basic_result.get("tests", ""),
@@ -206,7 +212,7 @@ class EnhancedCapsuleGenerator:
         files = {}
         
         # CI/CD configuration
-        if "deploy" in request.description.lower() or request.constraints.get("ci_cd"):
+        if "deploy" in request.description.lower() or (request.constraints and request.constraints.get("ci_cd")):
             files[".github/workflows/ci.yml"] = self._generate_github_actions()
         
         # Docker compose for complex projects

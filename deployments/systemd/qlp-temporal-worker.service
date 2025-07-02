@@ -1,0 +1,28 @@
+[Unit]
+Description=Quantum Layer Platform Temporal Worker
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=qlp
+Group=qlp
+WorkingDirectory=/opt/qlp
+Environment="PYTHONPATH=/opt/qlp"
+Environment="PATH=/opt/qlp/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStartPre=/bin/bash -c 'until curl -s http://localhost:7233 > /dev/null 2>&1; do sleep 1; done'
+ExecStart=/opt/qlp/venv/bin/python -m src.orchestrator.worker_production
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/qlp/temporal-worker.log
+StandardError=append:/var/log/qlp/temporal-worker-error.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/qlp
+
+[Install]
+WantedBy=multi-user.target

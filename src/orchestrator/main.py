@@ -5,7 +5,7 @@ Coordinates the entire system, decomposes requests, and manages execution flow.
 
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 from uuid import UUID, uuid4
@@ -53,8 +53,21 @@ app.add_middleware(
 
 
 # Initialize clients
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+# Use Azure OpenAI if configured, otherwise fall back to OpenAI
+if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
+    from openai import AsyncAzureOpenAI
+    openai_client = AsyncAzureOpenAI(
+        api_key=settings.AZURE_OPENAI_API_KEY,
+        api_version=settings.AZURE_OPENAI_API_VERSION,
+        azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
+    )
+    logger.info(f"Azure OpenAI client initialized", endpoint=settings.AZURE_OPENAI_ENDPOINT)
+else:
+    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    logger.info("OpenAI client initialized")
+    
 anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+logger.info("Anthropic client initialized")
 memory_client = VectorMemoryClient(settings.VECTOR_MEMORY_URL)
 agent_client = AgentFactoryClient(settings.AGENT_FACTORY_URL)
 validation_client = ValidationMeshClient(settings.VALIDATION_MESH_URL)
@@ -123,8 +136,11 @@ Example:
   "metadata": {}
 }"""
         
+        # Use deployment name for Azure OpenAI, model name for OpenAI
+        model = settings.AZURE_OPENAI_DEPLOYMENT_NAME if settings.AZURE_OPENAI_ENDPOINT else "gpt-3.5-turbo"
+        
         response = await self.openai.chat.completions.create(
-            model="gpt-3.5-turbo",  # Using faster model for better responsiveness
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.description}
@@ -597,7 +613,7 @@ async def create_hitl_request(request: Dict[str, Any]):
     """Create a new HITL request"""
     try:
         request_id = str(uuid4())
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         hitl_data = {
             "request_id": request_id,
@@ -609,9 +625,7 @@ async def create_hitl_request(request: Dict[str, Any]):
             "timeout_minutes": request.get("timeout_minutes", 60),
             "status": "pending",
             "created_at": timestamp,
-            "expires_at": datetime.utcnow().replace(
-                minute=datetime.utcnow().minute + request.get("timeout_minutes", 60)
-            ).isoformat()
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=request.get("timeout_minutes", 60))).isoformat()
         }
         
         # Store in memory (in production, use a database)
@@ -759,7 +773,8 @@ async def generate_enhanced_capsule(request: ExecutionRequest):
         return JSONResponse(content=response_data)
         
     except Exception as e:
-        logger.error(f"Enhanced capsule generation failed: {str(e)}")
+        import traceback
+        logger.error(f"Enhanced capsule generation failed: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

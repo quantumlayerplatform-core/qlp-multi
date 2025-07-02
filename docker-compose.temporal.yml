@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # Temporal Worker Service
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.temporal-worker
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=qlp-main
+      - PYTHONPATH=/app
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - DATABASE_URL=postgresql://qlp:qlp@postgres:5432/qlp
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - temporal
+    volumes:
+      - ./src:/app/src:ro  # Read-only mount for development
+      - ./logs:/var/log/qlp
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # Run multiple workers
+      
+  # Add Temporal to existing services
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+      - SKIP_SCHEMA_SETUP=false
+      - SKIP_DEFAULT_NAMESPACE_CREATION=false
+    depends_on:
+      - temporal-postgres
+    networks:
+      - qlp-network
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8088:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    networks:
+      - qlp-network
+
+  temporal-postgres:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal_data:/var/lib/postgresql/data
+    networks:
+      - qlp-network
+
+networks:
+  qlp-network:
+    external: true
+
+volumes:
+  temporal_data:

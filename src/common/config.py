@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
+        extra="allow"  # Allow extra fields from .env
     )
     
     # Application
@@ -32,8 +33,9 @@ class Settings(BaseSettings):
     @field_validator('OPENAI_API_KEY', 'ANTHROPIC_API_KEY')
     @classmethod
     def validate_api_keys(cls, v: str, info) -> str:
-        if not v:
-            raise ValueError(f"{info.field_name} is required. Please set it in your .env file")
+        if not v or v == "your-openai-api-key" or v == "your-anthropic-api-key":
+            print(f"⚠️  Warning: {info.field_name} is not set. Please set it in your .env file for full functionality")
+            return v or ""  # Return empty string instead of failing
         return v
     
     # Azure OpenAI

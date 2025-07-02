@@ -191,3 +191,66 @@ Required environment variables (set in `.env`):
 - Caching implemented at multiple levels
 - Async processing for long-running tasks
 - Resource limits enforced in sandbox execution
+
+## Special Features
+
+### Meta-Prompt Engineering System
+The platform includes an advanced prompt engineering system (`src/agents/meta_prompts/`) that implements recursive self-improvement:
+- Prompt Genome: DNA-like structures encoding prompt strategies
+- Evolution strategies: Conjecture & Refutation, Explanation Depth, Error Correction
+- Automatic learning from each execution
+- Principle library with wisdom from Deutsch, Popper, Dijkstra, Kay, Liskov
+
+### Multi-Tier Agent System
+- **T0 (Simple)**: Basic tasks using Llama/GPT-3.5
+- **T1 (Context-aware)**: Enhanced GPT-3.5 with project understanding
+- **T2 (Reasoning)**: Claude for complex problem solving
+- **T3 (Meta-agents)**: Orchestrate other agents for large tasks
+
+## API Documentation
+
+All services expose OpenAPI documentation at:
+- Orchestrator: http://localhost:8000/docs
+- Agent Factory: http://localhost:8001/docs
+- Validation Mesh: http://localhost:8002/docs
+- Vector Memory: http://localhost:8003/docs
+- Execution Sandbox: http://localhost:8004/docs
+
+Comprehensive endpoint documentation available in `docs/API_ENDPOINTS.md`.
+
+## Common Debugging Commands
+
+```bash
+# View service logs
+docker logs qlp-orchestrator -f
+docker logs qlp-agent-factory -f
+
+# Check Temporal workflow status
+temporal workflow list
+temporal workflow describe -w <workflow-id>
+
+# Inspect vector memory
+curl http://localhost:8003/api/v1/memory/search -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"query": "your search query", "limit": 10}'
+
+# Test agent generation
+curl http://localhost:8001/api/v1/agents/generate -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"task": "implement fizzbuzz", "tier": "T0"}'
+
+# Validate code snippet
+curl http://localhost:8002/api/v1/validate -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(\"hello\")", "language": "python"}'
+```
+
+## Project Structure Reference
+
+Key directories to know:
+- `src/common/models/` - Shared Pydantic models for API contracts
+- `src/common/config.py` - Centralized configuration management
+- `config/` - Environment-specific configurations
+- `scripts/` - Automation and deployment scripts
+- `tests/fixtures/` - Test data and mocks
+- `docs/` - API and architecture documentation

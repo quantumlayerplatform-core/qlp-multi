@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qlp-temporal-worker
+  namespace: qlp
+  labels:
+    app: qlp-temporal-worker
+    component: worker
+    tier: backend
+spec:
+  replicas: 3  # Scale based on workload
+  selector:
+    matchLabels:
+      app: qlp-temporal-worker
+  template:
+    metadata:
+      labels:
+        app: qlp-temporal-worker
+        component: worker
+        tier: backend
+    spec:
+      containers:
+      - name: temporal-worker
+        image: qlp/temporal-worker:latest
+        imagePullPolicy: Always
+        command: ["python", "-m", "src.orchestrator.worker_production"]
+        env:
+        - name: PYTHONPATH
+          value: "/app"
+        - name: TEMPORAL_HOST
+          value: "temporal-frontend.temporal:7233"
+        - name: TEMPORAL_NAMESPACE
+          value: "default"
+        - name: TEMPORAL_TASK_QUEUE
+          value: "qlp-main"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: openai-api-key
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: anthropic-api-key
+        - name: AZURE_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: azure-openai-api-key
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: azure-openai-endpoint
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: database-url
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import temporalio; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-temporal-worker
+  namespace: qlp
+spec:
+  selector:
+    app: qlp-temporal-worker
+  ports:
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  type: ClusterIP

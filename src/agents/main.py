@@ -475,6 +475,30 @@ else:
         }
 
 
+# Error handling metrics endpoint
+@app.get("/error-metrics")
+async def get_error_metrics():
+    """Get error handling and circuit breaker metrics"""
+    # Import error handler inside function to ensure it's loaded
+    from src.common.error_handling import error_handler
+    
+    metrics = error_handler.get_metrics()
+    
+    # Add service-specific information
+    metrics["service"] = "agent_factory"
+    metrics["timestamp"] = datetime.utcnow().isoformat()
+    
+    # Add health status based on circuit breakers
+    open_circuits = [
+        name for name, cb in metrics["circuit_breakers"].items() 
+        if cb["state"] == "open"
+    ]
+    metrics["health_status"] = "degraded" if open_circuits else "healthy"
+    metrics["open_circuits"] = open_circuits
+    
+    return metrics
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -5,7 +5,7 @@ No mocks, fully integrated with all services
 import asyncio
 import logging
 import json
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from temporalio import activity, workflow
@@ -131,12 +131,14 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
         
         similar_requests = []
         if memory_response.status_code == 200:
-            similar_requests = memory_response.json().get("results", [])
+            # Memory service returns a list directly
+            response_data = memory_response.json()
+            similar_requests = response_data if isinstance(response_data, list) else response_data.get("results", [])
             activity.logger.info(f"Found {len(similar_requests)} similar past requests")
         
         # Decompose with context from similar requests
         response = await client.post(
-            f"http://localhost:{settings.ORCHESTRATOR_PORT}/decompose",
+            f"http://localhost:{settings.ORCHESTRATOR_PORT}/test/decompose",
             json={
                 "description": request["description"],
                 "tenant_id": request["tenant_id"],
@@ -242,18 +244,25 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
     
     async with httpx.AsyncClient(timeout=300.0) as client:
         # Execute via agent service
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         response = await client.post(
             f"http://localhost:{settings.AGENT_FACTORY_PORT}/execute",
             json={
-                "task": task,
+                "task": {
+                    "id": task.get("task_id", task.get("id", "")),
+                    "type": task.get("type", "code_generation"),
+                    "description": task.get("description", ""),
+                    "complexity": task.get("complexity", "medium"),
+                    "status": task.get("status", "pending"),
+                    "metadata": task.get("metadata", {})
+                },
                 "tier": tier,
                 "context": task.get("context", {})
             }
         )
         
-        execution_time = (datetime.utcnow() - start_time).total_seconds()
+        execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         
         if response.status_code != 200:
             # Store failed execution for learning
@@ -531,7 +540,7 @@ async def request_human_review_activity(
                 "approved": False,
                 "reviewer": "system",
                 "reason": "Failed to create review request",
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         
         hitl_request = response.json()
@@ -575,7 +584,7 @@ async def request_human_review_activity(
             "approved": False,
             "reviewer": "system",
             "reason": "Review timeout - auto-rejected for safety",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
 
@@ -676,8 +685,8 @@ class QLPWorkflow:
     @workflow.run
     async def run(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the complete workflow for an NLP request"""
-        import time
-        start_time = time.time()
+        # Use workflow.now() instead of time.time() for deterministic time
+        start_time = workflow.now()
         
         workflow_result = {
             "request_id": request["request_id"],
@@ -837,7 +846,9 @@ class QLPWorkflow:
                 "traceback": str(e.__traceback__)
             })
         
-        workflow_result["execution_time"] = time.time() - start_time
+        # Calculate execution time using workflow time
+        end_time = workflow.now()
+        workflow_result["execution_time"] = (end_time - start_time).total_seconds()
         return workflow_result
     
     def _topological_sort(self, tasks: List[Dict[str, Any]], dependencies: Dict[str, List[str]]) -> List[str]:

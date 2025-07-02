@@ -10,6 +10,7 @@ import json
 from functools import lru_cache
 import time
 
+import logging
 import structlog
 from openai import AsyncAzureOpenAI, RateLimitError, APITimeoutError, APIError
 import redis.asyncio as redis
@@ -113,7 +114,7 @@ class OptimizedAzureLLMClient:
         """Load Azure deployment configuration with scaling parameters"""
         return {
             "gpt-4": {
-                "deployment_name": settings.AZURE_GPT4_DEPLOYMENT or "gpt-4",
+                "deployment_name": getattr(settings, 'AZURE_OPENAI_DEPLOYMENT_NAME', None) or "gpt-4",
                 "max_concurrent": 5,
                 "timeout": 60,
                 "max_retries": 3,
@@ -121,7 +122,7 @@ class OptimizedAzureLLMClient:
                 "tpm_limit": 90000  # Tokens per minute
             },
             "gpt-4-turbo-preview": {
-                "deployment_name": settings.AZURE_GPT4_DEPLOYMENT or "gpt-4",
+                "deployment_name": getattr(settings, 'AZURE_OPENAI_DEPLOYMENT_NAME', None) or "gpt-4",
                 "max_concurrent": 8,
                 "timeout": 45,
                 "max_retries": 3,
@@ -129,7 +130,7 @@ class OptimizedAzureLLMClient:
                 "tpm_limit": 150000
             },
             "gpt-3.5-turbo": {
-                "deployment_name": settings.AZURE_GPT35_DEPLOYMENT or "gpt-35-turbo",
+                "deployment_name": getattr(settings, 'AZURE_OPENAI_DEPLOYMENT_NAME', None) or "gpt-35-turbo",
                 "max_concurrent": 20,
                 "timeout": 30,
                 "max_retries": 3,
@@ -154,7 +155,7 @@ class OptimizedAzureLLMClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((RateLimitError, APITimeoutError)),
-        before_sleep=before_sleep_log(logger, structlog.INFO)
+        before_sleep=before_sleep_log(logger, logging.INFO)
     )
     async def _make_request_with_retry(
         self,

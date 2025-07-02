@@ -16,7 +16,7 @@ llama-index==0.9.13
 temporalio==1.4.0
 
 # Vector databases
-qdrant-client==1.7.0
+qdrant-client==1.14.3
 weaviate-client==3.25.3
 
 # Database

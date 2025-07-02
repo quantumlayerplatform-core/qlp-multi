@@ -11,6 +11,7 @@ from enum import Enum
 import time
 from functools import lru_cache
 
+import logging
 import structlog
 from openai import AsyncOpenAI, AsyncAzureOpenAI, RateLimitError, APITimeoutError
 from anthropic import AsyncAnthropic
@@ -104,7 +105,7 @@ class LLMClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((RateLimitError, APITimeoutError)),
-        before_sleep=before_sleep_log(logger, structlog.INFO)
+        before_sleep=before_sleep_log(logger, logging.INFO)
     )
     async def _make_request_with_retry(
         self,
@@ -190,62 +191,62 @@ class LLMClient:
         
         async with self.request_semaphore:
             try:
-            if provider in [LLMProvider.OPENAI, LLMProvider.AZURE_OPENAI, LLMProvider.GROQ]:
-                # For Azure, map model names to deployment names
-                if provider == LLMProvider.AZURE_OPENAI:
-                    deployment_name = AZURE_DEPLOYMENT_MAPPING.get(model, model)
-                    logger.debug(f"Azure OpenAI: mapping {model} to deployment {deployment_name}")
-                    model = deployment_name
+                if provider in [LLMProvider.OPENAI, LLMProvider.AZURE_OPENAI, LLMProvider.GROQ]:
+                    # For Azure, map model names to deployment names
+                    if provider == LLMProvider.AZURE_OPENAI:
+                        deployment_name = AZURE_DEPLOYMENT_MAPPING.get(model, model)
+                        logger.debug(f"Azure OpenAI: mapping {model} to deployment {deployment_name}")
+                        model = deployment_name
                 
-                # OpenAI-compatible API with retry
-                response = await self._make_request_with_retry(
-                    client=client,
-                    provider=provider,
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    timeout=timeout,
-                    **kwargs
-                )
-                
-                return {
-                    "content": response.choices[0].message.content,
-                    "usage": {
-                        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                        "total_tokens": response.usage.total_tokens if response.usage else 0
-                    },
-                    "model": response.model,
-                    "provider": provider.value,
-                    "finish_reason": response.choices[0].finish_reason,
-                    "latency": time.time() - start_time
-                }
-                
-            elif provider == LLMProvider.ANTHROPIC:
-                # Anthropic API with retry
-                response = await self._make_request_with_retry(
-                    client=client,
-                    provider=provider,
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs
-                )
-                
-                return {
-                    "content": response.content[0].text,
-                    "usage": {
-                        "prompt_tokens": response.usage.input_tokens,
-                        "completion_tokens": response.usage.output_tokens,
-                        "total_tokens": response.usage.input_tokens + response.usage.output_tokens
-                    },
-                    "model": response.model,
-                    "provider": provider.value,
-                    "finish_reason": response.stop_reason,
-                    "latency": time.time() - start_time
-                }
+                    # OpenAI-compatible API with retry
+                    response = await self._make_request_with_retry(
+                        client=client,
+                        provider=provider,
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout=timeout,
+                        **kwargs
+                    )
+                    
+                    return {
+                        "content": response.choices[0].message.content,
+                        "usage": {
+                            "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                            "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                            "total_tokens": response.usage.total_tokens if response.usage else 0
+                        },
+                        "model": response.model,
+                        "provider": provider.value,
+                        "finish_reason": response.choices[0].finish_reason,
+                        "latency": time.time() - start_time
+                    }
+                    
+                elif provider == LLMProvider.ANTHROPIC:
+                    # Anthropic API with retry
+                    response = await self._make_request_with_retry(
+                        client=client,
+                        provider=provider,
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **kwargs
+                    )
+                    
+                    return {
+                        "content": response.content[0].text,
+                        "usage": {
+                            "prompt_tokens": response.usage.input_tokens,
+                            "completion_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+                        },
+                        "model": response.model,
+                        "provider": provider.value,
+                        "finish_reason": response.stop_reason,
+                        "latency": time.time() - start_time
+                    }
                 
             except Exception as e:
                 self.metrics["errors"] += 1
@@ -343,8 +344,8 @@ def get_model_for_tier(tier: str) -> tuple[str, LLMProvider]:
     
     tier_mapping = {
         "T0": [
-            (has_groq, ("llama3-8b-8192", LLMProvider.GROQ)),  # Updated Groq model name
-            (has_azure, ("gpt-3.5-turbo", LLMProvider.AZURE_OPENAI)),
+            (has_azure, ("gpt-3.5-turbo", LLMProvider.AZURE_OPENAI)),  # Prioritize Azure OpenAI
+            (has_groq, ("llama3-8b-8192", LLMProvider.GROQ)),
             (has_openai, ("gpt-3.5-turbo", LLMProvider.OPENAI)),
         ],
         "T1": [

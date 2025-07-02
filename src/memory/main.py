@@ -4,7 +4,7 @@ Manages semantic memory, code patterns, and learning from past executions
 """
 
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import asyncio
 from uuid import uuid4
@@ -25,7 +25,7 @@ from qdrant_client.models import (
     UpdateStatus
 )
 import numpy as np
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AsyncAzureOpenAI
 import hashlib
 
 from src.common.models import (
@@ -52,7 +52,19 @@ app.add_middleware(
 
 
 # Initialize clients
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
+    # Use Azure OpenAI if configured
+    openai_client = AsyncAzureOpenAI(
+        api_key=settings.AZURE_OPENAI_API_KEY,
+        api_version=settings.AZURE_OPENAI_API_VERSION,
+        azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
+    )
+    logger.info(f"Using Azure OpenAI for embeddings: {settings.AZURE_OPENAI_ENDPOINT}")
+else:
+    # Fall back to OpenAI
+    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    logger.info("Using OpenAI for embeddings")
+
 qdrant_client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
 
 # Collection names
@@ -99,10 +111,16 @@ class VectorMemoryService:
                 raise
     
     async def get_embedding(self, text: str) -> List[float]:
-        """Get embedding vector for text using OpenAI"""
+        """Get embedding vector for text using OpenAI or Azure OpenAI"""
         try:
+            # Use deployment name for Azure or model name for OpenAI
+            model = "text-embedding-ada-002"
+            if hasattr(settings, 'AZURE_OPENAI_ENDPOINT') and settings.AZURE_OPENAI_ENDPOINT:
+                # For Azure, use the deployment name
+                model = "text-embedding-ada-002"  # Azure deployment name
+                
             response = await self.openai.embeddings.create(
-                model="text-embedding-ada-002",
+                model=model,
                 input=text
             )
             return response.data[0].embedding
@@ -198,7 +216,7 @@ class VectorMemoryService:
                     "description": request.description,
                     "tasks": [{"id": t.id, "type": t.type, "description": t.description} for t in tasks],
                     "dependencies": dependencies,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "tenant_id": request.tenant_id,
                     "user_id": request.user_id
                 }
@@ -378,7 +396,7 @@ Stack Trace: {error_context.get('stack_trace', '')[:500]}
                 vector=embedding,
                 payload={
                     **error_context,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "occurrence_count": 1
                 }
             )
@@ -534,6 +552,35 @@ async def get_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/performance/task")
+async def get_task_performance(
+    type: str, 
+    complexity: str = "medium"
+):
+    """Get performance metrics for a task type"""
+    try:
+        performance = await memory_service.get_task_performance(type, complexity)
+        if performance:
+            return performance
+        else:
+            # Return default performance if no data exists
+            return {
+                "optimal_tier": "T0",
+                "success_rate": 0.8,
+                "sample_size": 0,
+                "tier_stats": {}
+            }
+    except Exception as e:
+        logger.error(f"Error getting task performance: {e}")
+        # Return default on error instead of 404
+        return {
+            "optimal_tier": "T0",
+            "success_rate": 0.8,
+            "sample_size": 0,
+            "tier_stats": {}
+        }
+
+
 
 
 @app.post("/patterns/code")
@@ -553,7 +600,7 @@ async def store_code_pattern(pattern: Dict[str, Any]):
             payload={
                 "content": content,
                 "type": "code_pattern",
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 **metadata
             }
         )
@@ -601,7 +648,7 @@ async def store_execution_pattern(data: Dict[str, Any]):
             payload={
                 **content,
                 **metadata,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
         )
         
@@ -638,7 +685,7 @@ async def store_validation_pattern(data: Dict[str, Any]):
             payload={
                 **content,
                 **metadata,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
         )
         
@@ -676,7 +723,7 @@ async def store_capsule_pattern(data: Dict[str, Any]):
             payload={
                 "capsule": content,
                 **metadata,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
         )
         
