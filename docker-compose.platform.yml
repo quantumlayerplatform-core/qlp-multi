@@ -1,0 +1,271 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: qlp-postgres
+    environment:
+      POSTGRES_USER: qlp_user
+      POSTGRES_PASSWORD: qlp_password
+      POSTGRES_DB: qlp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qlp_user -d qlp_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qlp-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: qlp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qlp-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qlp-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+    networks:
+      - qlp-network
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: qlp-temporal
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=qlp_user
+      - POSTGRES_PWD=qlp_password
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - qlp-network
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: qlp-temporal-ui
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "8088:8080"
+    depends_on:
+      - temporal
+    networks:
+      - qlp-network
+
+  # QLP Microservices
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-orchestrator
+    environment:
+      SERVICE_NAME: orchestrator
+      PORT: 8000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: qlp_user
+      POSTGRES_PASSWORD: qlp_password
+      POSTGRES_DB: qlp_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TEMPORAL_HOST: temporal
+      TEMPORAL_PORT: 7233
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+      - ./capsule_versions:/app/capsule_versions
+    networks:
+      - qlp-network
+
+  agent-factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-agent-factory
+    environment:
+      SERVICE_NAME: agent-factory
+      PORT: 8001
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - qlp-network
+
+  validation-mesh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-validation-mesh
+    environment:
+      SERVICE_NAME: validation-mesh
+      PORT: 8002
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - qlp-network
+
+  vector-memory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-vector-memory
+    environment:
+      SERVICE_NAME: vector-memory
+      PORT: 8003
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8003:8003"
+    depends_on:
+      - qdrant
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - qlp-network
+
+  execution-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-execution-sandbox
+    environment:
+      SERVICE_NAME: execution-sandbox
+      PORT: 8004
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - qlp-network
+    privileged: true  # Required for Docker-in-Docker
+
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-temporal-worker
+    environment:
+      SERVICE_NAME: temporal-worker
+      TEMPORAL_HOST: temporal
+      TEMPORAL_PORT: 7233
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: qlp_user
+      POSTGRES_PASSWORD: qlp_password
+      POSTGRES_DB: qlp_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+    depends_on:
+      - temporal
+      - orchestrator
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - qlp-network
+
+  # Monitoring and Management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: qlp-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@qlp.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - qlp-network
+
+  # Nginx Reverse Proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    container_name: qlp-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - orchestrator
+      - agent-factory
+      - validation-mesh
+      - vector-memory
+      - execution-sandbox
+    networks:
+      - qlp-network
+
+networks:
+  qlp-network:
+    driver: bridge
+    name: qlp-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

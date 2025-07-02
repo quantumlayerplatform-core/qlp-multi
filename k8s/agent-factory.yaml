@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-agent-factory
+  namespace: qlp-production
+  labels:
+    app: qlp-agent-factory
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8001
+      targetPort: 8001
+      protocol: TCP
+  selector:
+    app: qlp-agent-factory
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qlp-agent-factory
+  namespace: qlp-production
+  labels:
+    app: qlp-agent-factory
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: qlp-agent-factory
+  template:
+    metadata:
+      labels:
+        app: qlp-agent-factory
+    spec:
+      containers:
+        - name: agent-factory
+          image: qlpregistry.azurecr.io/qlp-platform:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8001
+          env:
+            - name: SERVICE_NAME
+              value: "agent-factory"
+            - name: PORT
+              value: "8001"
+            - name: AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_ENDPOINT
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_API_KEY
+            - name: AZURE_OPENAI_DEPLOYMENT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_DEPLOYMENT_NAME
+          envFrom:
+            - configMapRef:
+                name: qlp-config
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 5
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - qlp-agent-factory
+                topologyKey: kubernetes.io/hostname

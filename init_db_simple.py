@@ -1,47 +1,41 @@
 #!/usr/bin/env python3
-"""
-Simple Database Initialization Script
-"""
+"""Simple database initialization script"""
 
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-# Set database URL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://qlp_user:qlp_password@127.0.0.1:5432/qlp_db')
-
-# Create engine
-engine = create_engine(DATABASE_URL, echo=True)
-
-# Import the Base from database module to get all models
 import sys
-sys.path.append('.')
+from sqlalchemy import create_engine
 
-# Import to register all models
-from src.common.database import Base, CapsuleModel, CapsuleVersionModel, CapsuleDeliveryModel, CapsuleSignatureModel
+# Add src to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from src.common.database import Base
 
 def init_database():
     """Initialize database tables"""
+    # Get database URL
+    database_url = os.getenv(
+        "DATABASE_URL",
+        "postgresql://qlp_user:qlp_password@postgres:5432/qlp_db"
+    )
+    
+    print(f"Connecting to database: {database_url}")
+    
     try:
-        print(f"Connecting to database: {DATABASE_URL}")
+        # Create engine
+        engine = create_engine(database_url)
         
         # Create all tables
+        print("Creating database tables...")
         Base.metadata.create_all(bind=engine)
         
-        print("✅ Database tables created successfully!")
-        
-        # Test connection
-        with engine.connect() as conn:
-            result = conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-            tables = [row[0] for row in result]
-            print(f"✅ Created tables: {tables}")
-        
+        print("Database initialization completed successfully!")
         return True
         
     except Exception as e:
-        print(f"❌ Database initialization failed: {str(e)}")
+        print(f"Database initialization failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
-
 
 if __name__ == "__main__":
     success = init_database()

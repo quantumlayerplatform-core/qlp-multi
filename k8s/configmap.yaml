@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qlp-config
+  namespace: qlp-production
+data:
+  # Service URLs
+  ORCHESTRATOR_URL: "http://qlp-orchestrator:8000"
+  AGENT_FACTORY_URL: "http://qlp-agent-factory:8001"
+  VALIDATION_MESH_URL: "http://qlp-validation-mesh:8002"
+  VECTOR_MEMORY_URL: "http://qlp-vector-memory:8003"
+  EXECUTION_SANDBOX_URL: "http://qlp-execution-sandbox:8004"
+  
+  # Database
+  POSTGRES_HOST: "qlp-postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "qlpadmin"
+  POSTGRES_DB: "qlp_db"
+  
+  # Redis
+  REDIS_HOST: "qlp-redis"
+  REDIS_PORT: "6379"
+  
+  # Qdrant
+  QDRANT_HOST: "qlp-qdrant"
+  QDRANT_PORT: "6333"
+  
+  # Temporal
+  TEMPORAL_HOST: "qlp-temporal"
+  TEMPORAL_PORT: "7233"
+  
+  # Azure OpenAI
+  AZURE_OPENAI_API_VERSION: "2024-02-15-preview"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  DEBUG: "false"

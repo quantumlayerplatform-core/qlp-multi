@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qlp-ingress
+  namespace: qlp-production
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
+    appgw.ingress.kubernetes.io/request-timeout: "300"
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+spec:
+  tls:
+    - hosts:
+        - qlp.yourdomain.com
+      secretName: qlp-tls-secret
+  rules:
+    - host: qlp.yourdomain.com
+      http:
+        paths:
+          - path: /api/v1/orchestrator
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-orchestrator
+                port:
+                  number: 8000
+          - path: /api/v1/agents
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-agent-factory
+                port:
+                  number: 8001
+          - path: /api/v1/validation
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-validation-mesh
+                port:
+                  number: 8002
+          - path: /api/v1/memory
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-vector-memory
+                port:
+                  number: 8003
+          - path: /api/v1/sandbox
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-execution-sandbox
+                port:
+                  number: 8004
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qlp-orchestrator
+                port:
+                  number: 8000

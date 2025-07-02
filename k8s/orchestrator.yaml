@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-orchestrator
+  namespace: qlp-production
+  labels:
+    app: qlp-orchestrator
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: qlp-orchestrator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qlp-orchestrator
+  namespace: qlp-production
+  labels:
+    app: qlp-orchestrator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: qlp-orchestrator
+  template:
+    metadata:
+      labels:
+        app: qlp-orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: qlpregistry.azurecr.io/qlp-platform:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: SERVICE_NAME
+              value: "orchestrator"
+            - name: PORT
+              value: "8000"
+            - name: AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_ENDPOINT
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_API_KEY
+            - name: AZURE_OPENAI_DEPLOYMENT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: AZURE_OPENAI_DEPLOYMENT_NAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: qlp-secrets
+                  key: POSTGRES_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: qlp-config
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: capsule-versions
+              mountPath: /app/capsule_versions
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: capsule-versions
+          persistentVolumeClaim:
+            claimName: qlp-capsule-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qlp-capsule-storage
+  namespace: qlp-production
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: azurefile
