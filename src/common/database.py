@@ -93,8 +93,8 @@ class CapsuleVersionModel(Base):
     
     # Relationships
     capsule = relationship("CapsuleModel", back_populates="versions")
-    parent_version = relationship("CapsuleVersionModel", remote_side=[id])
-    child_versions = relationship("CapsuleVersionModel")
+    parent_version = relationship("CapsuleVersionModel", remote_side=[id], back_populates="child_versions")
+    child_versions = relationship("CapsuleVersionModel", back_populates="parent_version", overlaps="parent_version")
     
     # Indexes
     __table_args__ = (

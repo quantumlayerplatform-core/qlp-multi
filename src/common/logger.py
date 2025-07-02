@@ -18,8 +18,13 @@ from structlog.stdlib import LoggerFactory
 from pythonjsonlogger import jsonlogger
 from rich.console import Console
 from rich.logging import RichHandler
-import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
+
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
 
 
 # Configuration from environment
@@ -162,6 +167,9 @@ class QLPLogger:
     
     def _init_sentry(self):
         """Initialize Sentry error tracking"""
+        if not SENTRY_AVAILABLE:
+            return
+            
         sentry_logging = LoggingIntegration(
             level=logging.INFO,
             event_level=logging.ERROR
