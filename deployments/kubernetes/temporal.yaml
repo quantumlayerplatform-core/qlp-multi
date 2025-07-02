@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      containers:
+      - name: temporal
+        image: temporalio/auto-setup:latest
+        ports:
+        - containerPort: 7233
+        env:
+        - name: DB
+          value: postgres12
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PWD
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_SEEDS
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: POSTGRES_HOST
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: qlp
+spec:
+  selector:
+    app: temporal
+  ports:
+  - port: 7233
+    targetPort: 7233
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-ui
+  template:
+    metadata:
+      labels:
+        app: temporal-ui
+    spec:
+      containers:
+      - name: temporal-ui
+        image: temporalio/ui:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TEMPORAL_ADDRESS
+          value: temporal:7233
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: qlp
+spec:
+  selector:
+    app: temporal-ui
+  ports:
+  - port: 8080
+    targetPort: 8080

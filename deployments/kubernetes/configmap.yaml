@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qlp-config
+  namespace: qlp
+data:
+  # Service URLs - internal cluster communication
+  ORCHESTRATOR_URL: "http://orchestrator:8000"
+  AGENT_FACTORY_URL: "http://agent-factory:8001"
+  VALIDATION_MESH_URL: "http://validation-mesh:8002"
+  VECTOR_MEMORY_URL: "http://vector-memory:8003"
+  EXECUTION_SANDBOX_URL: "http://execution-sandbox:8004"
+  
+  # Database Configuration
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "qlp_db"
+  POSTGRES_USER: "qlp_user"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  
+  # Qdrant Configuration
+  QDRANT_HOST: "qdrant"
+  QDRANT_PORT: "6333"
+  QDRANT_URL: "http://qdrant:6333"
+  
+  # Temporal Configuration
+  TEMPORAL_HOST: "temporal"
+  TEMPORAL_PORT: "7233"
+  TEMPORAL_NAMESPACE: "default"
+  TEMPORAL_TASK_QUEUE: "qlp-main"
+  
+  # Application Settings
+  ENV: "kubernetes"
+  LOG_LEVEL: "INFO"

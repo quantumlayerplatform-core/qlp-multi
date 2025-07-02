@@ -1,0 +1,309 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      containers:
+      - name: orchestrator
+        image: qlp-orchestrator:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SERVICE_NAME
+          value: orchestrator
+        - name: PORT
+          value: "8000"
+        - name: DATABASE_URL
+          value: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
+        - name: ORCHESTRATOR_PORT
+          value: "8000"
+        - name: AGENT_FACTORY_PORT
+          value: "8001"
+        - name: VALIDATION_MESH_PORT
+          value: "8002"
+        - name: VECTOR_MEMORY_PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: qlp
+spec:
+  selector:
+    app: orchestrator
+  ports:
+  - port: 8000
+    targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-factory
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-factory
+  template:
+    metadata:
+      labels:
+        app: agent-factory
+    spec:
+      containers:
+      - name: agent-factory
+        image: qlp-agent-factory:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8001
+        env:
+        - name: SERVICE_NAME
+          value: agent-factory
+        - name: PORT
+          value: "8001"
+        - name: ORCHESTRATOR_PORT
+          value: "8000"
+        - name: AGENT_FACTORY_PORT
+          value: "8001"
+        - name: VALIDATION_MESH_PORT
+          value: "8002"
+        - name: VECTOR_MEMORY_PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-factory
+  namespace: qlp
+spec:
+  selector:
+    app: agent-factory
+  ports:
+  - port: 8001
+    targetPort: 8001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-mesh
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: validation-mesh
+  template:
+    metadata:
+      labels:
+        app: validation-mesh
+    spec:
+      containers:
+      - name: validation-mesh
+        image: qlp-validation-mesh:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8002
+        env:
+        - name: SERVICE_NAME
+          value: validation-mesh
+        - name: PORT
+          value: "8002"
+        - name: DATABASE_URL
+          value: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
+        - name: ORCHESTRATOR_PORT
+          value: "8000"
+        - name: AGENT_FACTORY_PORT
+          value: "8001"
+        - name: VALIDATION_MESH_PORT
+          value: "8002"
+        - name: VECTOR_MEMORY_PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: validation-mesh
+  namespace: qlp
+spec:
+  selector:
+    app: validation-mesh
+  ports:
+  - port: 8002
+    targetPort: 8002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector-memory
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vector-memory
+  template:
+    metadata:
+      labels:
+        app: vector-memory
+    spec:
+      containers:
+      - name: vector-memory
+        image: qlp-vector-memory:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8003
+        env:
+        - name: SERVICE_NAME
+          value: vector-memory
+        - name: PORT
+          value: "8003"
+        - name: ORCHESTRATOR_PORT
+          value: "8000"
+        - name: AGENT_FACTORY_PORT
+          value: "8001"
+        - name: VALIDATION_MESH_PORT
+          value: "8002"
+        - name: VECTOR_MEMORY_PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-memory
+  namespace: qlp
+spec:
+  selector:
+    app: vector-memory
+  ports:
+  - port: 8003
+    targetPort: 8003
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-sandbox
+  namespace: qlp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: execution-sandbox
+  template:
+    metadata:
+      labels:
+        app: execution-sandbox
+    spec:
+      containers:
+      - name: execution-sandbox
+        image: qlp-execution-sandbox:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8004
+        env:
+        - name: SERVICE_NAME
+          value: execution-sandbox
+        - name: PORT
+          value: "8004"
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        - name: ORCHESTRATOR_PORT
+          value: "8000"
+        - name: AGENT_FACTORY_PORT
+          value: "8001"
+        - name: VALIDATION_MESH_PORT
+          value: "8002"
+        - name: VECTOR_MEMORY_PORT
+          value: "8003"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-sandbox
+  namespace: qlp
+spec:
+  selector:
+    app: execution-sandbox
+  ports:
+  - port: 8004
+    targetPort: 8004
