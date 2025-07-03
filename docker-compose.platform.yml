@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   # Infrastructure Services
@@ -98,6 +97,7 @@ services:
       REDIS_PORT: 6379
       TEMPORAL_HOST: temporal
       TEMPORAL_PORT: 7233
+      TEMPORAL_SERVER: temporal:7233
       DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
@@ -223,6 +223,7 @@ services:
       SERVICE_NAME: temporal-worker
       TEMPORAL_HOST: temporal
       TEMPORAL_PORT: 7233
+      TEMPORAL_SERVER: temporal:7233
       DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

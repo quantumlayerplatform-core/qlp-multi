@@ -59,11 +59,26 @@ def get_docker_client():
     global docker_client
     if docker_client is None:
         try:
-            docker_client = docker.from_env()
+            # Clear problematic DOCKER_HOST environment variable
+            import os
+            old_docker_host = os.environ.pop('DOCKER_HOST', None)
+            
+            # Try direct socket connection first
+            docker_client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+            # Test the connection
+            docker_client.ping()
+            logger.info("Docker client initialized successfully")
         except Exception as e:
             logger.warning(f"Docker client initialization failed: {e}")
-            # Return None to allow service to run without Docker
-            return None
+            # Try fallback method
+            try:
+                docker_client = docker.from_env()
+                docker_client.ping()
+                logger.info("Docker client initialized via from_env")
+            except Exception as e2:
+                logger.warning(f"Docker fallback initialization failed: {e2}")
+                # Return None to allow service to run without Docker
+                return None
     return docker_client
 
 
@@ -307,7 +322,7 @@ class RuntimeValidator(Validator):
     
     def __init__(self):
         super().__init__("runtime_validator", "runtime")
-        self.docker = docker_client
+        self.docker = get_docker_client()
         
     async def validate(self, code: str, language: str = "python") -> ValidationCheck:
         """Test runtime execution"""
@@ -320,6 +335,15 @@ class RuntimeValidator(Validator):
             )
         
         try:
+            # Check if Docker is available
+            if self.docker is None:
+                return ValidationCheck(
+                    name=self.name,
+                    type=self.type,
+                    status=ValidationStatus.SKIPPED,
+                    message="Runtime validation skipped - Docker not available"
+                )
+            
             # Create a simple test wrapper
             test_code = f"""
 import sys
