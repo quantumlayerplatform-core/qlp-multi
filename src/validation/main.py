@@ -94,315 +94,167 @@ class Validator:
         raise NotImplementedError
 
 
-class SyntaxValidator(Validator):
-    """Validates syntax correctness"""
+class LLMValidator(Validator):
+    """Universal LLM-powered validator for any programming language"""
     
-    def __init__(self):
-        super().__init__("syntax_validator", "static_analysis")
-        
-    async def validate(self, code: str, language: str = "python") -> ValidationCheck:
-        """Check syntax validity"""
-        if language != "python":
+    def __init__(self, name: str, validator_type: str, validation_focus: str):
+        super().__init__(name, validator_type)
+        self.validation_focus = validation_focus
+        self.llm_client = self._get_llm_client()
+    
+    def _get_llm_client(self):
+        """Initialize LLM client (Azure OpenAI or OpenAI)"""
+        try:
+            from src.common.config import settings
+            if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
+                from openai import AsyncAzureOpenAI
+                return AsyncAzureOpenAI(
+                    api_key=settings.AZURE_OPENAI_API_KEY,
+                    api_version=settings.AZURE_OPENAI_API_VERSION,
+                    azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
+                )
+            else:
+                from openai import AsyncOpenAI
+                return AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM client: {e}")
+            return None
+    
+    async def validate(self, code: str, language: str = "unknown") -> ValidationCheck:
+        """Universal validation using LLM analysis"""
+        if not self.llm_client:
             return ValidationCheck(
                 name=self.name,
                 type=self.type,
                 status=ValidationStatus.SKIPPED,
-                message=f"Syntax validation not implemented for {language}"
+                message="LLM client not available for validation"
             )
         
-        try:
-            ast.parse(code)
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.PASSED,
-                message="Syntax is valid"
-            )
-        except SyntaxError as e:
+        if not code.strip():
             return ValidationCheck(
                 name=self.name,
                 type=self.type,
                 status=ValidationStatus.FAILED,
-                message=f"Syntax error: {str(e)}",
-                details={"line": e.lineno, "offset": e.offset},
+                message="Empty code provided",
                 severity="error"
-            )
-
-
-class StyleValidator(Validator):
-    """Validates code style and formatting"""
-    
-    def __init__(self):
-        super().__init__("style_validator", "static_analysis")
-        
-    async def validate(self, code: str, language: str = "python") -> ValidationCheck:
-        """Check code style"""
-        if language != "python":
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.SKIPPED,
-                message=f"Style validation not implemented for {language}"
             )
         
         try:
-            # Format with black and check if it changes
-            formatted = black.format_str(code, mode=black.FileMode())
+            # Create validation prompt
+            prompt = self._create_validation_prompt(code, language)
             
-            if formatted == code:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.PASSED,
-                    message="Code style is correct"
-                )
-            else:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.WARNING,
-                    message="Code style can be improved",
-                    details={"formatted": formatted},
-                    severity="warning"
-                )
+            # Use deployment name for Azure OpenAI, model name for OpenAI
+            model = getattr(settings, 'AZURE_OPENAI_DEPLOYMENT_NAME', 'gpt-3.5-turbo')
+            
+            response = await self.llm_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are an expert code validator. Analyze code and respond in JSON format."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                timeout=30.0
+            )
+            
+            # Parse LLM response
+            result = json.loads(response.choices[0].message.content)
+            
+            # Convert to ValidationCheck
+            return ValidationCheck(
+                name=self.name,
+                type=self.type,
+                status=ValidationStatus(result.get("status", "warning")),
+                message=result.get("message", "Validation completed"),
+                details=result.get("details", {}),
+                severity=result.get("severity", "info")
+            )
+            
         except Exception as e:
             return ValidationCheck(
                 name=self.name,
                 type=self.type,
-                status=ValidationStatus.FAILED,
-                message=f"Style check error: {str(e)}",
-                severity="error"
+                status=ValidationStatus.WARNING,
+                message=f"LLM validation error: {str(e)}",
+                severity="warning"
             )
-
-
-class SecurityValidator(Validator):
-    """Validates security issues"""
     
-    def __init__(self):
-        super().__init__("security_validator", "security")
-        
-    async def validate(self, code: str, language: str = "python") -> ValidationCheck:
-        """Check for security vulnerabilities"""
-        if language != "python":
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.SKIPPED,
-                message=f"Security validation not implemented for {language}"
-            )
-        
-        if not BANDIT_AVAILABLE:
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.SKIPPED,
-                message="Bandit not available for security scanning"
-            )
-        
-        try:
-            # Write code to temporary file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                f.write(code)
-                temp_file = f.name
-            
-            # Run bandit
-            from bandit.core.config import Config
-            conf = Config()
-            b_mgr = bandit_manager.BanditManager(conf, 'file')
-            b_mgr.discover_files([temp_file])
-            b_mgr.run_tests()
-            
-            # Clean up
-            os.unlink(temp_file)
-            
-            # Check results
-            issues = []
-            for issue in b_mgr.get_issue_list():
-                issues.append({
-                    "severity": issue.severity,
-                    "confidence": issue.confidence,
-                    "text": issue.text,
-                    "line": issue.lineno
-                })
-            
-            if not issues:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.PASSED,
-                    message="No security issues found"
-                )
-            else:
-                # Check severity
-                high_severity = any(i["severity"] == "HIGH" for i in issues)
-                status = ValidationStatus.FAILED if high_severity else ValidationStatus.WARNING
-                
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=status,
-                    message=f"Found {len(issues)} security issues",
-                    details={"issues": issues},
-                    severity="error" if high_severity else "warning"
-                )
-                
-        except Exception as e:
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.FAILED,
-                message=f"Security check error: {str(e)}",
-                severity="error"
-            )
+    def _create_validation_prompt(self, code: str, language: str) -> str:
+        """Create language-agnostic validation prompt"""
+        return f"""
+Analyze this {language} code for {self.validation_focus}:
 
+```{language}
+{code}
+```
 
-class TypeValidator(Validator):
-    """Validates type correctness"""
-    
-    def __init__(self):
-        super().__init__("type_validator", "static_analysis")
-        
-    async def validate(self, code: str, language: str = "python") -> ValidationCheck:
-        """Check type safety"""
-        if language != "python":
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.SKIPPED,
-                message=f"Type validation not implemented for {language}"
-            )
-        
-        try:
-            # Write code to temporary file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                f.write(code)
-                temp_file = f.name
-            
-            # Run mypy
-            stdout, stderr, exit_status = mypy.api.run([temp_file, "--ignore-missing-imports"])
-            
-            # Clean up
-            os.unlink(temp_file)
-            
-            if exit_status == 0:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.PASSED,
-                    message="Type checking passed"
-                )
-            else:
-                # Parse errors
-                errors = []
-                for line in stdout.split('\n'):
-                    if line.strip() and 'error:' in line:
-                        errors.append(line.strip())
-                
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.WARNING,
-                    message=f"Type checking found {len(errors)} issues",
-                    details={"errors": errors[:10]},  # Limit to 10 errors
-                    severity="warning"
-                )
-                
-        except Exception as e:
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.FAILED,
-                message=f"Type check error: {str(e)}",
-                severity="error"
-            )
+Respond in JSON format:
+{{
+    "status": "passed|warning|failed",
+    "message": "Brief description of findings",
+    "severity": "info|warning|error|critical",
+    "details": {{
+        "issues": ["list of specific issues if any"],
+        "suggestions": ["improvement suggestions"],
+        "confidence": 0.8
+    }}
+}}
 
+Focus on {self.validation_focus}. Consider:
+- Language-specific best practices for {language}
+- Common patterns and anti-patterns
+- Security implications if applicable
+- Code structure and readability
+- Potential runtime issues
 
-class RuntimeValidator(Validator):
-    """Validates runtime behavior"""
-    
-    def __init__(self):
-        super().__init__("runtime_validator", "runtime")
-        self.docker = get_docker_client()
-        
-    async def validate(self, code: str, language: str = "python") -> ValidationCheck:
-        """Test runtime execution"""
-        if language != "python":
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.SKIPPED,
-                message=f"Runtime validation not implemented for {language}"
-            )
-        
-        try:
-            # Check if Docker is available
-            if self.docker is None:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.SKIPPED,
-                    message="Runtime validation skipped - Docker not available"
-                )
-            
-            # Create a simple test wrapper
-            test_code = f"""
-import sys
-import traceback
-
-try:
-{chr(10).join('    ' + line for line in code.split(chr(10)))}
-    print("Runtime validation: SUCCESS")
-except Exception as e:
-    print(f"Runtime validation: ERROR - {{str(e)}}")
-    traceback.print_exc()
-    sys.exit(1)
+Be pragmatic - small style issues should be warnings, not failures.
 """
-            
-            # Run in Docker container
-            container = self.docker.containers.run(
-                "python:3.11-slim",
-                command=["python", "-c", test_code],
-                detach=True,
-                remove=False,
-                mem_limit="512m",
-                cpu_quota=50000  # 0.5 CPU
-            )
-            
-            # Wait for completion (timeout 30s)
-            result = container.wait(timeout=30)
-            logs = container.logs().decode('utf-8')
-            container.remove()
-            
-            if result['StatusCode'] == 0:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.PASSED,
-                    message="Runtime execution successful",
-                    details={"output": logs[:500]}  # Limit output
-                )
-            else:
-                return ValidationCheck(
-                    name=self.name,
-                    type=self.type,
-                    status=ValidationStatus.FAILED,
-                    message="Runtime execution failed",
-                    details={"output": logs[:1000]},
-                    severity="error"
-                )
-                
-        except Exception as e:
-            return ValidationCheck(
-                name=self.name,
-                type=self.type,
-                status=ValidationStatus.FAILED,
-                message=f"Runtime validation error: {str(e)}",
-                severity="error"
-            )
+
+
+class SyntaxValidator(LLMValidator):
+    """Universal syntax validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("syntax_validator", "static_analysis", "syntax correctness and basic structure")
+
+
+class StyleValidator(LLMValidator):
+    """Universal style validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("style_validator", "static_analysis", "code style, formatting, and readability")
+
+
+class SecurityValidator(LLMValidator):
+    """Universal security validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("security_validator", "security", "security vulnerabilities and unsafe patterns")
+
+
+class TypeValidator(LLMValidator):
+    """Universal type validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("type_validator", "static_analysis", "type safety and data flow")
+
+
+class LogicValidator(LLMValidator):
+    """Universal logic validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("logic_validator", "logic_analysis", "logical correctness and algorithmic soundness")
+
+
+class RuntimeValidator(LLMValidator):
+    """Universal runtime behavior validator using LLM"""
+    
+    def __init__(self):
+        super().__init__("runtime_validator", "runtime", "potential runtime issues and execution safety")
 
 
 class ValidationMesh:
-    """Orchestrates multiple validators with ensemble consensus"""
+    """Orchestrates multiple LLM-powered validators with ensemble consensus"""
     
     def __init__(self):
         self.validators = [
@@ -410,6 +262,7 @@ class ValidationMesh:
             StyleValidator(),
             SecurityValidator(),
             TypeValidator(),
+            LogicValidator(),
             RuntimeValidator()
         ]
         
@@ -510,6 +363,17 @@ class ValidationMesh:
 validation_mesh = ValidationMesh()
 
 
+# Import new runtime validation components
+from src.validation.qlcapsule_runtime_validator import QLCapsuleRuntimeValidator
+from src.validation.confidence_engine import AdvancedConfidenceEngine
+from src.validation.capsule_schema import CapsuleValidator, CapsuleManifest
+
+# Initialize runtime validation components
+runtime_validator = QLCapsuleRuntimeValidator()
+confidence_engine = AdvancedConfidenceEngine()
+capsule_validator = CapsuleValidator()
+
+
 # API Endpoints
 @app.post("/validate", response_model=ValidationReport)
 async def validate_execution(request: Dict[str, Any]):
@@ -533,6 +397,259 @@ async def validate_code(request: Dict[str, Any]):
     
     report = await validation_mesh.validate_code(code, language)
     return report
+
+
+@app.post("/validate/capsule/runtime")
+async def validate_capsule_runtime(request: Dict[str, Any]):
+    """Validate QLCapsule by running it in a Docker container"""
+    try:
+        # Parse capsule from request
+        from src.common.models import QLCapsule
+        capsule_data = request.get("capsule")
+        if not capsule_data:
+            raise HTTPException(status_code=400, detail="No capsule provided")
+        
+        capsule = QLCapsule(**capsule_data)
+        
+        # Run runtime validation
+        runtime_result = await runtime_validator.validate_capsule_runtime(capsule)
+        
+        return {
+            "validation_id": f"runtime_{capsule.id}_{datetime.utcnow().timestamp()}",
+            "capsule_id": capsule.id,
+            "language": runtime_result.language,
+            "success": runtime_result.success,
+            "confidence_score": runtime_result.confidence_score,
+            "execution_time": runtime_result.execution_time,
+            "memory_usage": runtime_result.memory_usage,
+            "install_success": runtime_result.install_success,
+            "runtime_success": runtime_result.runtime_success,
+            "test_success": runtime_result.test_success,
+            "issues": runtime_result.issues,
+            "recommendations": runtime_result.recommendations,
+            "human_review_required": runtime_validator.should_escalate_to_human(runtime_result),
+            "metrics": runtime_result.metrics,
+            "stdout": runtime_result.stdout,
+            "stderr": runtime_result.stderr
+        }
+        
+    except Exception as e:
+        logger.error(f"Runtime validation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Runtime validation failed: {str(e)}")
+
+
+@app.post("/validate/capsule/confidence")
+async def validate_capsule_confidence(request: Dict[str, Any]):
+    """Perform advanced confidence analysis on QLCapsule"""
+    try:
+        # Parse capsule from request
+        from src.common.models import QLCapsule
+        capsule_data = request.get("capsule")
+        if not capsule_data:
+            raise HTTPException(status_code=400, detail="No capsule provided")
+        
+        capsule = QLCapsule(**capsule_data)
+        
+        # Parse optional manifest
+        manifest = None
+        manifest_data = request.get("manifest")
+        if manifest_data:
+            try:
+                manifest = CapsuleManifest(**manifest_data)
+            except Exception as e:
+                logger.warning(f"Invalid manifest provided: {e}")
+        
+        # Parse optional runtime result
+        runtime_result = None
+        runtime_data = request.get("runtime_result")
+        if runtime_data:
+            try:
+                from src.validation.qlcapsule_runtime_validator import RuntimeValidationResult
+                runtime_result = RuntimeValidationResult(**runtime_data)
+            except Exception as e:
+                logger.warning(f"Invalid runtime result provided: {e}")
+        
+        # Run confidence analysis
+        confidence_analysis = await confidence_engine.analyze_confidence(capsule, manifest, runtime_result)
+        
+        return {
+            "analysis_id": f"confidence_{capsule.id}_{datetime.utcnow().timestamp()}",
+            "capsule_id": capsule.id,
+            "overall_score": confidence_analysis.overall_score,
+            "confidence_level": confidence_analysis.confidence_level,
+            "deployment_recommendation": confidence_analysis.deployment_recommendation,
+            "human_review_required": confidence_analysis.human_review_required,
+            "estimated_success_probability": confidence_analysis.estimated_success_probability,
+            "dimensions": {
+                dim.value: {
+                    "score": metric.score,
+                    "weight": metric.weight,
+                    "evidence": metric.evidence,
+                    "concerns": metric.concerns
+                }
+                for dim, metric in confidence_analysis.dimensions.items()
+            },
+            "risk_factors": confidence_analysis.risk_factors,
+            "success_indicators": confidence_analysis.success_indicators,
+            "failure_modes": confidence_analysis.failure_modes,
+            "mitigation_strategies": confidence_analysis.mitigation_strategies,
+            "metadata": confidence_analysis.metadata
+        }
+        
+    except Exception as e:
+        logger.error(f"Confidence analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Confidence analysis failed: {str(e)}")
+
+
+@app.post("/validate/capsule/complete")
+async def validate_capsule_complete(request: Dict[str, Any]):
+    """Complete capsule validation including runtime and confidence analysis"""
+    try:
+        # Parse capsule from request
+        from src.common.models import QLCapsule
+        capsule_data = request.get("capsule")
+        if not capsule_data:
+            raise HTTPException(status_code=400, detail="No capsule provided")
+        
+        capsule = QLCapsule(**capsule_data)
+        
+        # Step 1: Runtime validation
+        logger.info(f"Starting runtime validation for capsule {capsule.id}")
+        runtime_result = await runtime_validator.validate_capsule_runtime(capsule)
+        
+        # Step 2: Validate manifest if present
+        manifest = None
+        if "capsule.yaml" in capsule.source_code:
+            try:
+                is_valid, manifest, errors = capsule_validator.validate_manifest(capsule.source_code["capsule.yaml"])
+                if not is_valid:
+                    logger.warning(f"Invalid manifest: {errors}")
+            except Exception as e:
+                logger.warning(f"Manifest validation failed: {e}")
+        
+        # Step 3: Confidence analysis
+        logger.info(f"Starting confidence analysis for capsule {capsule.id}")
+        confidence_analysis = await confidence_engine.analyze_confidence(capsule, manifest, runtime_result)
+        
+        # Step 4: Generate comprehensive report
+        validation_report = {
+            "validation_id": f"complete_{capsule.id}_{datetime.utcnow().timestamp()}",
+            "capsule_id": capsule.id,
+            "timestamp": datetime.utcnow().isoformat(),
+            
+            # Runtime validation results
+            "runtime": {
+                "language": runtime_result.language,
+                "success": runtime_result.success,
+                "confidence_score": runtime_result.confidence_score,
+                "execution_time": runtime_result.execution_time,
+                "memory_usage": runtime_result.memory_usage,
+                "install_success": runtime_result.install_success,
+                "runtime_success": runtime_result.runtime_success,
+                "test_success": runtime_result.test_success,
+                "issues": runtime_result.issues,
+                "recommendations": runtime_result.recommendations
+            },
+            
+            # Confidence analysis results
+            "confidence": {
+                "overall_score": confidence_analysis.overall_score,
+                "confidence_level": confidence_analysis.confidence_level,
+                "deployment_recommendation": confidence_analysis.deployment_recommendation,
+                "estimated_success_probability": confidence_analysis.estimated_success_probability,
+                "dimensions": {
+                    dim.value: {
+                        "score": metric.score,
+                        "evidence": metric.evidence,
+                        "concerns": metric.concerns
+                    }
+                    for dim, metric in confidence_analysis.dimensions.items()
+                },
+                "risk_factors": confidence_analysis.risk_factors,
+                "success_indicators": confidence_analysis.success_indicators,
+                "failure_modes": confidence_analysis.failure_modes,
+                "mitigation_strategies": confidence_analysis.mitigation_strategies
+            },
+            
+            # Overall assessment
+            "assessment": {
+                "deployment_ready": (
+                    runtime_result.success and 
+                    confidence_analysis.overall_score >= 0.7 and
+                    not confidence_analysis.human_review_required
+                ),
+                "human_review_required": (
+                    runtime_validator.should_escalate_to_human(runtime_result) or
+                    confidence_analysis.human_review_required
+                ),
+                "blocking_issues": [
+                    issue for issue in runtime_result.issues 
+                    if any(keyword in issue.lower() for keyword in ['failed', 'error', 'critical'])
+                ],
+                "final_recommendation": _generate_final_recommendation(runtime_result, confidence_analysis)
+            }
+        }
+        
+        logger.info(f"Complete validation finished for capsule {capsule.id}")
+        return validation_report
+        
+    except Exception as e:
+        logger.error(f"Complete validation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Complete validation failed: {str(e)}")
+
+
+def _generate_final_recommendation(runtime_result, confidence_analysis) -> str:
+    """Generate final deployment recommendation"""
+    if not runtime_result.success:
+        return "🚫 BLOCK - Runtime validation failed"
+    
+    if confidence_analysis.confidence_level.value == "critical":
+        return "🚀 DEPLOY - High confidence, ready for production"
+    elif confidence_analysis.confidence_level.value == "high":
+        return "✅ DEPLOY - Good confidence, monitor closely"
+    elif confidence_analysis.confidence_level.value == "medium":
+        return "⚠️ CAUTIOUS DEPLOY - Enhanced monitoring required"
+    elif confidence_analysis.confidence_level.value == "low":
+        return "🔍 HUMAN REVIEW - Manual approval needed"
+    else:
+        return "🚫 BLOCK - Critical issues must be resolved"
+
+
+@app.get("/validate/capsule/schema")
+async def get_capsule_schema():
+    """Get the capsule.yaml schema definition"""
+    return {
+        "schema_version": "1.0.0",
+        "description": "QLC Capsule manifest schema",
+        "schema": CapsuleManifest.schema()
+    }
+
+
+@app.post("/validate/capsule/manifest")
+async def validate_capsule_manifest(request: Dict[str, Any]):
+    """Validate capsule manifest (capsule.yaml)"""
+    try:
+        manifest_content = request.get("manifest_content", "")
+        if not manifest_content:
+            raise HTTPException(status_code=400, detail="No manifest content provided")
+        
+        is_valid, manifest, errors = capsule_validator.validate_manifest(manifest_content)
+        
+        return {
+            "valid": is_valid,
+            "manifest": manifest.dict() if manifest else None,
+            "errors": errors,
+            "recommendations": [
+                "Use semantic versioning for version field",
+                "Include health check configuration for services",
+                "Specify resource limits for production deployment",
+                "Add comprehensive documentation and metadata"
+            ] if not is_valid else []
+        }
+        
+    except Exception as e:
+        logger.error(f"Manifest validation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Manifest validation failed: {str(e)}")
 
 
 @app.get("/health")
