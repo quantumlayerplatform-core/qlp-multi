@@ -25,7 +25,8 @@ from src.sandbox.client import SandboxServiceClient
 from src.common.config import settings
 from src.agents.confidence_scorer import ConfidenceScorer
 from src.agents.execution_validator import ExecutionValidator
-from src.common.code_extractor import extract_code_from_markdown, clean_code_output
+from src.common.code_extractor import extract_code_from_markdown, clean_code_output, is_directory_listing
+from src.agents.meta_prompts.meta_engineer import MetaPromptEngineer, PromptEvolutionStrategy
 
 logger = structlog.get_logger()
 
@@ -116,6 +117,8 @@ class EnsembleOrchestrator:
         self.performance_history = defaultdict(list)
         self.confidence_scorer = ConfidenceScorer()
         self.execution_validator = ExecutionValidator(self.sandbox_client)
+        # 🧬 EPIC: Add meta-prompt engineering for intelligent prompt evolution
+        self.meta_engineer = MetaPromptEngineer(genome_storage_path='./data/prompt_genomes')
     
     async def execute_ensemble(
         self, 
@@ -347,20 +350,61 @@ class EnsembleOrchestrator:
         """Execute task with a single agent"""
         start_time = datetime.utcnow()
         
-        # Add role-specific context
+        # 🧬 EPIC: Generate evolved meta-prompt for this specific agent role
+        try:
+            evolution_strategy = {
+                AgentRole.IMPLEMENTER: PromptEvolutionStrategy.EXPLANATION_DEPTH,
+                AgentRole.ARCHITECT: PromptEvolutionStrategy.PRINCIPLE_EXTRACTION,
+                AgentRole.SECURITY_EXPERT: PromptEvolutionStrategy.CREATIVE_DESTRUCTION,
+                AgentRole.TEST_ENGINEER: PromptEvolutionStrategy.ERROR_CORRECTION,
+                AgentRole.REVIEWER: PromptEvolutionStrategy.CONJECTURE_REFUTATION,
+                AgentRole.OPTIMIZER: PromptEvolutionStrategy.CONTRARIAN,
+                AgentRole.DOCUMENTOR: PromptEvolutionStrategy.SYNTHESIS
+            }.get(role, PromptEvolutionStrategy.EXPLANATION_DEPTH)
+            
+            evolved_prompt = await self.meta_engineer.generate_meta_prompt(
+                task_description=task.description,
+                agent_role=role.value,
+                context=context,
+                evolution_strategy=evolution_strategy
+            )
+            
+            logger.info(f"🧬 Generated evolved meta-prompt for {role.value}", 
+                       prompt_length=len(evolved_prompt), strategy=evolution_strategy.value)
+            
+        except Exception as e:
+            logger.warning(f"Meta-prompt generation failed for {role.value}: {e}")
+            evolved_prompt = f"Complete this task: {task.description}"
+        
+        # Add role-specific context with evolved prompting
         role_context = context.copy()
         role_context["agent_role"] = role
+        role_context["meta_prompt"] = evolved_prompt
         role_context["specialization"] = SpecializedAgent(
             agent.agent_id, 
             role, 
             agent.tier
         ).specialization_prompts.get(role, "")
         
-        # Execute
+        # Execute with evolved meta-prompt
         result = await agent.execute(task, role_context)
         
-        # Basic validation
-        validation_score = 1.0 if result.status == TaskStatus.COMPLETED else 0.0
+        # 🛠️ EPIC: Enhanced validation to ensure real code generation
+        validation_score = await self._validate_agent_output(result, role)
+        
+        # Regenerate if we got directory listings instead of code
+        if role in [AgentRole.IMPLEMENTER, AgentRole.TEST_ENGINEER] and validation_score < 0.3:
+            logger.warning(f"Agent {agent.agent_id} generated directory listing, regenerating...")
+            
+            # Update the context with specific instruction to avoid directory listings
+            enhanced_context = role_context.copy()
+            enhanced_context["regeneration_reason"] = "Previous output was directory listing, not actual code"
+            enhanced_context["force_code_generation"] = True
+            enhanced_context["meta_prompt"] = evolved_prompt + "\n\nIMPORTANT: Generate ACTUAL working code, not directory structures or file listings. Provide complete, executable code with proper syntax."
+            
+            # Try once more with enhanced prompting
+            result = await agent.execute(task, enhanced_context)
+            validation_score = await self._validate_agent_output(result, role)
         
         return AgentContribution(
             agent_id=agent.agent_id,
@@ -412,6 +456,75 @@ class EnsembleOrchestrator:
             validated_contributions.append(contribution)
         
         return validated_contributions
+    
+    async def _validate_agent_output(self, result: TaskResult, role: AgentRole) -> float:
+        """🛠️ EPIC: Validate agent output to ensure real code generation"""
+        try:
+            # Extract the actual content
+            content = result.output
+            if isinstance(content, dict):
+                raw_code = content.get("content", content.get("code", ""))
+            else:
+                raw_code = str(content)
+            
+            # For implementer and test engineer roles, validate code generation
+            if role in [AgentRole.IMPLEMENTER, AgentRole.TEST_ENGINEER]:
+                # Check if it's a directory listing
+                if is_directory_listing(raw_code):
+                    logger.warning(f"Directory listing detected from {role.value} agent")
+                    return 0.1  # Very low score
+                
+                # Try to extract actual code
+                try:
+                    extracted_code = extract_code_from_markdown(raw_code)
+                    if not extracted_code or len(extracted_code.strip()) < 20:
+                        logger.warning(f"Insufficient code generated by {role.value} agent")
+                        return 0.2
+                    
+                    # Additional code quality checks
+                    code_score = self._assess_code_quality(extracted_code, role)
+                    return min(1.0, code_score)
+                    
+                except ValueError as e:
+                    logger.warning(f"Code extraction failed for {role.value} agent: {e}")
+                    return 0.1
+            
+            # For other roles, basic validation
+            if not content or (isinstance(content, str) and len(content.strip()) < 10):
+                return 0.3
+            
+            return 1.0 if result.status == TaskStatus.COMPLETED else 0.5
+            
+        except Exception as e:
+            logger.error(f"Validation failed for {role.value} agent: {e}")
+            return 0.1
+    
+    def _assess_code_quality(self, code: str, role: AgentRole) -> float:
+        """Assess the quality of generated code"""
+        score = 0.5  # Base score
+        
+        # Check for basic code structure
+        if "def " in code or "class " in code:
+            score += 0.2
+        
+        # Check for imports (shows proper module structure)
+        if "import " in code or "from " in code:
+            score += 0.1
+        
+        # Check for proper indentation
+        if "    " in code or "\t" in code:  # Has indentation
+            score += 0.1
+        
+        # Role-specific checks
+        if role == AgentRole.TEST_ENGINEER:
+            if "test" in code.lower() or "assert" in code:
+                score += 0.1
+        
+        # Check code length (substantial code)
+        if len(code) > 100:
+            score += 0.1
+        
+        return min(1.0, score)
     
     async def _synthesize_results(
         self,
@@ -495,10 +608,20 @@ class EnsembleOrchestrator:
             
             if contribution.role == AgentRole.IMPLEMENTER:
                 raw_code = output.get("content", output.get("code", ""))
-                synthesized["code"] = extract_code_from_markdown(raw_code)
+                try:
+                    synthesized["code"] = extract_code_from_markdown(raw_code)
+                except ValueError as e:
+                    logger.warning(f"Code extraction failed for {contribution.agent_id}: {e}")
+                    continue  # Skip this contribution
+                    
             elif contribution.role == AgentRole.TEST_ENGINEER:
                 raw_tests = output.get("content", output.get("tests", ""))
-                synthesized["tests"] = extract_code_from_markdown(raw_tests)
+                try:
+                    synthesized["tests"] = extract_code_from_markdown(raw_tests)
+                except ValueError as e:
+                    logger.warning(f"Test extraction failed for {contribution.agent_id}: {e}")
+                    continue
+                    
             elif contribution.role == AgentRole.DOCUMENTOR:
                 synthesized["documentation"] = output.get("content", output.get("documentation", ""))
             
@@ -508,10 +631,25 @@ class EnsembleOrchestrator:
                 "score": score
             })
         
-        # Ensure we have at least the code
+        # Ensure we have at least the code - try all implementer contributions
         if not synthesized["code"] and contributions:
-            raw_code = contributions[0].output.get("content", "")
-            synthesized["code"] = extract_code_from_markdown(raw_code)
+            for contribution in contributions:
+                if contribution.role == AgentRole.IMPLEMENTER:
+                    raw_code = contribution.output.get("content", "")
+                    try:
+                        synthesized["code"] = extract_code_from_markdown(raw_code)
+                        break
+                    except ValueError:
+                        continue
+                        
+        # If still no code, this synthesis failed
+        if not synthesized["code"]:
+            # Log the actual output for debugging
+            logger.error("🛠️ All implementer agents failed to generate actual code. Outputs:")
+            for contribution in contributions:
+                if contribution.role == AgentRole.IMPLEMENTER:
+                    logger.error(f"Agent {contribution.agent_id}: {str(contribution.output)[:200]}...")
+            raise ValueError("All implementer agents provided directory listings instead of code")
         
         return synthesized
     

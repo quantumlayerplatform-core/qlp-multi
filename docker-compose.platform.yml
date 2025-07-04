@@ -132,6 +132,7 @@ services:
       PORT: 8001
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379/0
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
@@ -221,7 +222,7 @@ services:
       - .env
     environment:
       SERVICE_NAME: temporal-worker
-      TEMPORAL_HOST: temporal
+      TEMPORAL_HOST: temporal:7233
       TEMPORAL_PORT: 7233
       TEMPORAL_SERVER: temporal:7233
       DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
@@ -236,6 +237,9 @@ services:
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
     depends_on:
       - temporal
       - orchestrator

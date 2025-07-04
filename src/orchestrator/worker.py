@@ -10,10 +10,12 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+# Import models for type hints but convert to dicts for workflow compatibility
 from ..common.models import (
     NLPRequest, Task, ExecutionPlan, ExecutionResult,
     AgentExecutionRequest, ValidationRequest
 )
+from typing import Union
 from ..agents.client import AgentFactoryClient
 from ..validation.client import ValidationMeshClient
 from ..memory.client import VectorMemoryClient
@@ -37,24 +39,25 @@ sandbox_client = SandboxServiceClient(base_url=f"http://localhost:{settings.SAND
 
 # Activities - Individual steps that can be retried
 @activity.defn
-async def decompose_request_activity(request: NLPRequest) -> List[Task]:
+async def decompose_request_activity(request: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Decompose NLP request into tasks"""
-    logger.info(f"Decomposing request: {request.request_id}")
+    logger.info(f"Decomposing request: {request['request_id']}")
     # This would normally call the orchestrator's decomposition logic
     # For now, we'll create a simple task
     return [
-        Task(
-            task_id=f"{request.request_id}_task_1",
-            type="code_generation",
-            description=request.description,
-            dependencies=[],
-            context={"original_request": request.description}
-        )
+        {
+            "task_id": f"{request['request_id']}_task_1",
+            "type": "code_generation",
+            "description": request['description'], 
+            "dependencies": [],
+            "context": {"original_request": request['description']},
+            "complexity": request.get('complexity', 'simple')
+        }
     ]
 
 
 @activity.defn
-async def execute_task_activity(task: Task, request_id: str) -> ExecutionResult:
+async def execute_task_activity(task: Dict[str, Any], request_id: str) -> Dict[str, Any]:
     """Execute a single task using appropriate agent"""
     logger.info(f"Executing task: {task.task_id}")
     
@@ -254,7 +257,7 @@ async def start_worker():
     """Start the Temporal worker"""
     # Create client
     client = await Client.connect(
-        settings.TEMPORAL_HOST,
+        settings.TEMPORAL_HOST,  # Temporal Python SDK expects just host:port, no protocol
         namespace=settings.TEMPORAL_NAMESPACE
     )
     

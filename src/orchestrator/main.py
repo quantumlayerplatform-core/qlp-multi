@@ -327,6 +327,33 @@ Example:
             total += complexity_weights.get(task.complexity, 60)
         
         return total
+    
+    def _apply_learning_insights(self, similar_executions: List[Dict[str, Any]]):
+        """🧠 EPIC: Apply learning insights from similar executions to enhance decomposition"""
+        if not similar_executions:
+            return
+            
+        # Extract actionable insights from the learning data
+        for execution_data in similar_executions:
+            learning_insights = execution_data.get("learning_insights", {})
+            
+            # Store optimal strategies for this orchestrator instance
+            optimal_strategies = learning_insights.get("optimal_strategies", [])
+            if optimal_strategies:
+                self._optimal_strategies = optimal_strategies
+                logger.info(f"🧠 Applied {len(optimal_strategies)} optimal strategies from learning")
+            
+            # Store common patterns for reference
+            common_patterns = learning_insights.get("common_patterns", [])
+            if common_patterns:
+                self._common_patterns = common_patterns
+                logger.info(f"🧠 Applied {len(common_patterns)} common patterns from learning")
+            
+            # Store recommended tiers if available
+            recommended_tiers = learning_insights.get("recommended_tiers", {})
+            if recommended_tiers:
+                self._recommended_tiers = recommended_tiers
+                logger.info(f"🧠 Applied recommended agent tiers from learning")
 
 
 # Temporal Workflow Definition
@@ -340,27 +367,34 @@ class QLPExecutionWorkflow:
         # Initialize orchestrator
         orchestrator = MetaOrchestrator()
         
-        # Step 1: Decompose request
+        # Step 1: Search for similar past executions for learning
+        similar_executions = await workflow.execute_activity(
+            search_similar_executions_activity,
+            request,
+            start_to_close_timeout=datetime.timedelta(minutes=1)
+        )
+        
+        # Step 2: Decompose request (enhanced with learning)
         decomposition = await workflow.execute_activity(
             decompose_request_activity,
-            request,
+            {"request": request, "similar_executions": similar_executions},
             start_to_close_timeout=datetime.timedelta(minutes=5)
         )
         
-        # Step 2: Create execution plan
+        # Step 3: Create execution plan
         plan = await workflow.execute_activity(
             create_plan_activity,
             decomposition,
             start_to_close_timeout=datetime.timedelta(minutes=2)
         )
         
-        # Step 3: Get human approval if needed
+        # Step 4: Get human approval if needed
         if plan.estimated_duration > 300:  # 5 minutes
             approval = await workflow.wait_for_signal("human_approval")
             if not approval:
                 raise Exception("Execution plan rejected by user")
         
-        # Step 4: Execute tasks
+        # Step 5: Execute tasks
         results = {}
         for task_id in plan.execution_order:
             task = next(t for t in plan.tasks if t.id == task_id)
@@ -385,14 +419,14 @@ class QLPExecutionWorkflow:
             
             results[task_id] = result
         
-        # Step 5: Validate results
+        # Step 6: Validate results
         validation_report = await workflow.execute_activity(
             validate_results_activity,
             results,
             start_to_close_timeout=datetime.timedelta(minutes=10)
         )
         
-        # Step 6: Package into QLCapsule
+        # Step 7: Package into QLCapsule
         capsule = await workflow.execute_activity(
             create_capsule_activity,
             {
@@ -409,9 +443,53 @@ class QLPExecutionWorkflow:
 
 # Activity implementations
 @activity.defn
-async def decompose_request_activity(request: ExecutionRequest) -> DecompositionResult:
+async def search_similar_executions_activity(request: ExecutionRequest) -> List[Dict[str, Any]]:
+    """🧠 EPIC: Search for similar past executions for learning"""
+    try:
+        # Search for similar requests in vector memory
+        similar_requests = await memory_client.search_similar_requests(
+            description=request.description,
+            limit=5
+        )
+        
+        # Search for relevant code patterns
+        similar_patterns = await memory_client.search_code_patterns(
+            query=request.description,
+            limit=3
+        )
+        
+        # Combine and format the learning data
+        learning_data = {
+            "similar_requests": similar_requests,
+            "relevant_patterns": similar_patterns,
+            "learning_insights": _extract_learning_insights(similar_requests, similar_patterns)
+        }
+        
+        logger.info(f"🧠 Found {len(similar_requests)} similar requests and {len(similar_patterns)} patterns for learning")
+        return [learning_data]
+        
+    except Exception as e:
+        logger.warning(f"Vector memory search failed: {e}, proceeding without learning data")
+        return []
+
+
+@activity.defn
+async def decompose_request_activity(params: Dict[str, Any]) -> DecompositionResult:
+    """Enhanced decomposition with learning from similar executions"""
     orchestrator = MetaOrchestrator()
-    return await orchestrator.decompose_request(request)
+    
+    if isinstance(params, dict):
+        request = params["request"]
+        similar_executions = params.get("similar_executions", [])
+        
+        # Enhance the orchestrator with learning data if available
+        if similar_executions:
+            orchestrator._apply_learning_insights(similar_executions)
+            
+        return await orchestrator.decompose_request(request)
+    else:
+        # Fallback for backward compatibility
+        return await orchestrator.decompose_request(params)
 
 
 @activity.defn
@@ -484,7 +562,83 @@ async def create_capsule_activity(params: Dict[str, Any]) -> QLCapsule:
     # Store capsule
     await memory_client.store_capsule(capsule)
     
+    # 🧠 EPIC: Store execution learning data
+    await _store_execution_learning(params, capsule)
+    
     return capsule
+
+
+def _extract_learning_insights(similar_requests: List[Dict], similar_patterns: List[Dict]) -> Dict[str, Any]:
+    """Extract actionable insights from similar executions"""
+    insights = {
+        "common_patterns": [],
+        "optimal_strategies": [],
+        "potential_pitfalls": [],
+        "recommended_tiers": {}
+    }
+    
+    # Analyze similar requests for patterns
+    for req in similar_requests:
+        if req.get("metadata", {}).get("success_rate", 0) > 0.8:
+            insights["optimal_strategies"].append({
+                "description": req.get("description", ""),
+                "strategy": req.get("metadata", {}).get("strategy", ""),
+                "confidence": req.get("metadata", {}).get("confidence", 0)
+            })
+    
+    # Extract common code patterns
+    for pattern in similar_patterns:
+        insights["common_patterns"].append({
+            "pattern": pattern.get("pattern_type", ""),
+            "usage_count": pattern.get("usage_count", 0),
+            "success_rate": pattern.get("success_rate", 0)
+        })
+    
+    return insights
+
+
+async def _store_execution_learning(params: Dict[str, Any], capsule: QLCapsule):
+    """Store execution results for future learning"""
+    try:
+        learning_data = {
+            "request_description": params["request"].description,
+            "execution_plan": params["plan"],
+            "results": params["results"],
+            "validation_report": params["validation"],
+            "capsule_confidence": capsule.confidence_score if hasattr(capsule, 'confidence_score') else 0,
+            "execution_duration": _calculate_duration(params),
+            "success": params["validation"].overall_status == "passed" if hasattr(params["validation"], 'overall_status') else True,
+            "agent_tiers_used": list(set(params["plan"].task_assignments.values())),
+            "patterns_detected": _detect_execution_patterns(params),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Store in vector memory for future learning
+        await memory_client.store_execution_pattern(learning_data)
+        
+        logger.info(f"🧠 Stored execution learning data for future use")
+        
+    except Exception as e:
+        logger.warning(f"Failed to store execution learning data: {e}")
+
+
+def _detect_execution_patterns(params: Dict[str, Any]) -> List[str]:
+    """Detect patterns in the execution for learning"""
+    patterns = []
+    
+    # Analyze task types and success patterns
+    for task_id, result in params["results"].items():
+        if result.confidence_score > 0.8:
+            patterns.append(f"high_confidence_{result.output_type}")
+        
+        if result.execution_time < 10:  # Fast execution
+            patterns.append(f"fast_execution_{result.output_type}")
+    
+    # Analyze overall execution pattern
+    if params["validation"].overall_status == "passed":
+        patterns.append("successful_execution")
+    
+    return patterns
 
 
 def _extract_source_code(results: Dict[str, TaskResult]) -> Dict[str, str]:
@@ -1461,6 +1615,7 @@ async def run_worker():
         task_queue="qlp-main",
         workflows=[QLPExecutionWorkflow],
         activities=[
+            search_similar_executions_activity,
             decompose_request_activity,
             create_plan_activity,
             execute_task_activity,

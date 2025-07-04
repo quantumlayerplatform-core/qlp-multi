@@ -165,7 +165,35 @@ class T0Agent(Agent):
                 prompt += f"- {key}: {value}\n"
             prompt += "\n"
         
-        prompt += "Generate the code to accomplish this task. Be direct and include only the code."
+        prompt += """IMPORTANT: Generate ACTUAL EXECUTABLE CODE, not directory structures or project layouts.
+
+Requirements:
+- Provide complete, working Python code
+- Include proper imports, functions, and classes
+- Do NOT provide directory listings, file structures, or project layouts
+- Do NOT use placeholder comments like "# implement this"
+- Generate real, functional implementation
+
+Example of what NOT to do:
+```
+src/
+├── main.py
+├── __init__.py
+└── tests/
+```
+
+Example of what TO do:
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+```
+
+Generate the complete, executable code now:"""
         
         return prompt
 
@@ -285,18 +313,35 @@ class T1Agent(Agent):
                 prompt += f"  Code: {pattern['code'][:200]}...\n\n"
         
         prompt += """
+CRITICAL: Generate ACTUAL EXECUTABLE CODE, NOT directory structures or file layouts.
+
+Requirements:
+- Provide complete, working Python code with real implementations
+- Include all necessary imports and proper error handling
+- Do NOT provide directory listings, project structures, or placeholders
+- Do NOT use comments like "# implement this" or "# add code here"
+- Generate functional, production-ready code
+
 Generate a complete solution including:
-1. Main implementation code
-2. Error handling
+1. Main implementation code (ACTUAL CODE, not structure)
+2. Error handling and validation
 3. Brief documentation
-4. Any necessary imports or dependencies
+4. All necessary imports and dependencies
 
 Format your response as JSON:
 {
-    "code": "main implementation",
-    "tests": "test code if applicable",
-    "documentation": "brief docs",
-    "dependencies": ["list", "of", "dependencies"]
+    "code": "complete executable Python code with imports, classes, functions",
+    "tests": "actual test code with assertions and test cases",
+    "documentation": "brief explanation of the implementation",
+    "dependencies": ["list", "of", "required", "packages"]
+}
+
+EXAMPLE OF GOOD RESPONSE:
+{
+    "code": "from fastapi import FastAPI, HTTPException\\nfrom pydantic import BaseModel\\n\\napp = FastAPI()\\n\\nclass User(BaseModel):\\n    name: str\\n    email: str\\n\\n@app.post('/users')\\ndef create_user(user: User):\\n    return {'message': 'User created', 'user': user}",
+    "tests": "import pytest\\nfrom fastapi.testclient import TestClient\\nfrom main import app\\n\\nclient = TestClient(app)\\n\\ndef test_create_user():\\n    response = client.post('/users', json={'name': 'John', 'email': 'john@example.com'})\\n    assert response.status_code == 200",
+    "documentation": "FastAPI application with user creation endpoint",
+    "dependencies": ["fastapi", "pydantic"]
 }
 """
         

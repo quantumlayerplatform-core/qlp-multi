@@ -122,7 +122,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
     async with httpx.AsyncClient(timeout=60.0) as client:
         # First, check vector memory for similar past requests
         memory_response = await client.post(
-            f"http://localhost:{settings.VECTOR_MEMORY_PORT}/search/requests",
+            f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/search/requests",
             json={
                 "description": request["description"],
                 "limit": 5
@@ -138,7 +138,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
         
         # Decompose with context from similar requests
         response = await client.post(
-            f"http://localhost:{settings.ORCHESTRATOR_PORT}/test/decompose",
+            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/test/decompose",
             json={
                 "description": request["description"],
                 "tenant_id": request["tenant_id"],
@@ -158,7 +158,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
         
         # Store decomposition for future learning
         await client.post(
-            f"http://localhost:{settings.VECTOR_MEMORY_PORT}/store/decomposition",
+            f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/store/decomposition",
             json={
                 "request": request,
                 "tasks": tasks,
@@ -193,7 +193,7 @@ async def select_agent_tier_activity(task: Dict[str, Any]) -> str:
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Get historical performance data
         perf_response = await client.get(
-            f"http://localhost:{settings.VECTOR_MEMORY_PORT}/performance/task",
+            f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/performance/task",
             params={
                 "type": task["type"],
                 "complexity": task["complexity"]
@@ -247,7 +247,7 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
         start_time = datetime.now(timezone.utc)
         
         response = await client.post(
-            f"http://localhost:{settings.AGENT_FACTORY_PORT}/execute",
+            f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
             json={
                 "task": {
                     "id": task.get("task_id", task.get("id", "")),
@@ -267,7 +267,7 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
         if response.status_code != 200:
             # Store failed execution for learning
             await client.post(
-                f"http://localhost:{settings.VECTOR_MEMORY_PORT}/store/execution",
+                f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/store/execution",
                 json={
                     "request_id": request_id,
                     "task": task,
@@ -295,7 +295,7 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
         
         # Store successful execution for learning
         await client.post(
-            f"http://localhost:{settings.VECTOR_MEMORY_PORT}/store/execution",
+            f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/store/execution",
             json={
                 "request_id": request_id,
                 "task": task,
@@ -308,7 +308,7 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
             output = result.get("output", {})
             if isinstance(output, dict) and "code" in output:
                 await client.post(
-                    f"http://localhost:{settings.VECTOR_MEMORY_PORT}/patterns/code",
+                    f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/patterns/code",
                     json={
                         "content": output["code"],
                         "metadata": {
@@ -376,7 +376,7 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
     async with httpx.AsyncClient(timeout=120.0) as client:
         # Run full validation pipeline
         response = await client.post(
-            f"http://localhost:{settings.VALIDATION_MESH_PORT}/validate/code",
+            f"http://validation-mesh:{settings.VALIDATION_MESH_PORT}/validate/code",
             json={
                 "code": code,
                 "language": language,
@@ -431,7 +431,7 @@ async def execute_in_sandbox_activity(code: str, language: str, test_inputs: Opt
         
         for i, inputs in enumerate(test_inputs):
             response = await client.post(
-                f"http://localhost:{settings.SANDBOX_PORT}/execute",
+                f"http://execution-sandbox:{settings.SANDBOX_PORT}/execute",
                 json={
                     "code": code,
                     "language": language,
@@ -519,7 +519,7 @@ async def request_human_review_activity(
     async with httpx.AsyncClient(timeout=300.0) as client:
         # Create HITL request
         response = await client.post(
-            f"http://localhost:{settings.ORCHESTRATOR_PORT}/hitl/request",
+            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/hitl/request",
             json={
                 "type": "code_review",
                 "task_id": task["task_id"],
@@ -554,7 +554,7 @@ async def request_human_review_activity(
             await asyncio.sleep(30)  # Check every 30 seconds
             
             status_response = await client.get(
-                f"http://localhost:{settings.ORCHESTRATOR_PORT}/hitl/status/{request_id}"
+                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/hitl/status/{request_id}"
             )
             
             if status_response.status_code == 200:
@@ -648,7 +648,7 @@ async def create_ql_capsule_activity(
     async with httpx.AsyncClient(timeout=60.0) as client:
         # Store capsule
         response = await client.post(
-            f"http://localhost:{settings.VECTOR_MEMORY_PORT}/store/capsule",
+            f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/store/capsule",
             json=capsule_data
         )
         
@@ -663,7 +663,7 @@ async def create_ql_capsule_activity(
         capsule_id = storage_result.get("capsule_id")
         
         # Generate download URL or storage location
-        capsule_url = f"http://localhost:{settings.ORCHESTRATOR_PORT}/capsules/{capsule_id}"
+        capsule_url = f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/capsules/{capsule_id}"
         
         return {
             "capsule_id": capsule_id,
@@ -899,8 +899,10 @@ async def start_worker():
     from ..common.config import settings
     
     # Create client
+    temporal_host = settings.TEMPORAL_HOST
+    logger.info(f"Connecting to Temporal at: {temporal_host}")
     client = await Client.connect(
-        settings.TEMPORAL_HOST,
+        temporal_host,  # Temporal Python SDK expects just host:port, no protocol
         namespace=settings.TEMPORAL_NAMESPACE
     )
     
