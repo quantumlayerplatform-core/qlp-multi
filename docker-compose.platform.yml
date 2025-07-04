@@ -99,6 +99,10 @@ services:
       TEMPORAL_PORT: 7233
       TEMPORAL_SERVER: temporal:7233
       DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
+      VECTOR_MEMORY_URL: http://vector-memory:8003
+      AGENT_FACTORY_URL: http://agent-factory:8001
+      VALIDATION_MESH_URL: http://validation-mesh:8002
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
@@ -133,6 +137,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_URL: redis://redis:6379/0
+      VECTOR_MEMORY_URL: http://vector-memory:8003
+      VALIDATION_MESH_URL: http://validation-mesh:8002
+      EXECUTION_SANDBOX_URL: http://execution-sandbox:8004
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
