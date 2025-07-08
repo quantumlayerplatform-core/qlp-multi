@@ -65,7 +65,7 @@ services:
     networks:
       - qlp-network
     healthcheck:
-      test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health || exit 1"]
+      test: ["CMD-SHELL", "nc -z $(hostname -i) 7233 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -226,7 +226,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - qlp-network
+    user: "0"  # Override Dockerfile USER to access Docker socket
     privileged: true  # Required for Docker-in-Docker
+    command: ["docker-entrypoint.sh"]  # Ensure entrypoint is called
 
   temporal-worker:
     build:

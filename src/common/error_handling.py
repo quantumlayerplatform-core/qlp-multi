@@ -5,6 +5,7 @@ Provides production-ready error handling, circuit breakers, and retry strategies
 
 import asyncio
 import functools
+import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 from datetime import datetime, timedelta
@@ -243,8 +244,8 @@ class ErrorHandler:
                     stop=stop_after_attempt(max_attempts),
                     wait=wait_exponential(multiplier=exponential_base, max=exponential_max),
                     retry=retry_if_exception_type(exceptions),
-                    before_sleep=before_sleep_log(logger, structlog.INFO),
-                    after=after_log(logger, structlog.INFO)
+                    before_sleep=before_sleep_log(logger, logging.INFO),
+                    after=after_log(logger, logging.INFO)
                 )
                 
                 service_name = service or func.__name__
@@ -264,8 +265,8 @@ class ErrorHandler:
                     stop=stop_after_attempt(max_attempts),
                     wait=wait_exponential(multiplier=exponential_base, max=exponential_max),
                     retry=retry_if_exception_type(exceptions),
-                    before_sleep=before_sleep_log(logger, structlog.INFO),
-                    after=after_log(logger, structlog.INFO)
+                    before_sleep=before_sleep_log(logger, logging.INFO),
+                    after=after_log(logger, logging.INFO)
                 )
                 
                 service_name = service or func.__name__

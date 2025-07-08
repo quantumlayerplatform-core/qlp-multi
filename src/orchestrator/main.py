@@ -875,12 +875,24 @@ async def respond_to_hitl(request_id: str, response: HITLResponse):
     
     # Update request with response
     request_data["status"] = "completed"
+    
+    # Handle both string and dictionary response formats
+    if isinstance(response.response, dict):
+        approved = response.response.get("approved", False)
+        comments = response.response.get("comments", "")
+        modifications = response.response.get("modifications", {})
+    else:
+        # Handle string response
+        approved = str(response.response).lower() in ["true", "yes", "approved", "approve", "1"]
+        comments = str(response.response) if isinstance(response.response, str) else ""
+        modifications = {}
+    
     request_data["result"] = {
-        "approved": response.response.get("approved", False),
+        "approved": approved,
         "reviewer_id": response.user_id,
         "confidence": response.confidence,
-        "comments": response.response.get("comments", ""),
-        "modifications": response.response.get("modifications", {}),
+        "comments": comments,
+        "modifications": modifications,
         "timestamp": response.responded_at.isoformat()
     }
     
@@ -922,6 +934,157 @@ async def get_pending_hitl_requests(priority: Optional[str] = None):
     )
     
     return {"pending_requests": pending, "count": len(pending)}
+
+
+@app.post("/hitl/auto-approve")
+async def auto_approve_hitl_requests(confidence_threshold: float = 0.85, max_approvals: int = 10):
+    """
+    Auto-approve HITL requests based on confidence threshold (AITL system)
+    This implements AI-in-the-Loop by automatically approving high-confidence requests
+    """
+    approved_requests = []
+    
+    for request_id, data in list(hitl_requests.items()):
+        if data["status"] != "pending":
+            continue
+            
+        if len(approved_requests) >= max_approvals:
+            break
+            
+        # Check if expired
+        if datetime.utcnow().isoformat() > data["expires_at"]:
+            data["status"] = "expired"
+            continue
+        
+        # Extract confidence score from context
+        context = data.get("context", {})
+        validation_result = context.get("validation_result", {})
+        confidence_score = validation_result.get("confidence_score", 0.0)
+        
+        # Auto-approve if confidence is high enough
+        if confidence_score >= confidence_threshold:
+            # Automatically approve the request
+            data["status"] = "completed"
+            data["result"] = {
+                "approved": True,
+                "reviewer_id": "aitl-system",
+                "confidence": confidence_score,
+                "comments": f"Auto-approved by AITL system (confidence: {confidence_score:.3f})",
+                "modifications": {},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            approved_requests.append({
+                "request_id": request_id,
+                "confidence_score": confidence_score,
+                "type": data["type"],
+                "auto_approved": True
+            })
+            
+            logger.info(
+                "AITL auto-approved request",
+                request_id=request_id,
+                confidence_score=confidence_score,
+                threshold=confidence_threshold
+            )
+    
+    return {
+        "approved_requests": approved_requests,
+        "count": len(approved_requests),
+        "confidence_threshold": confidence_threshold,
+        "message": f"Auto-approved {len(approved_requests)} requests with confidence >= {confidence_threshold}"
+    }
+
+
+@app.post("/hitl/batch-approve")
+async def batch_approve_hitl_requests(request_ids: List[str], user_id: str = "batch-approver"):
+    """
+    Batch approve multiple HITL requests
+    """
+    approved_requests = []
+    errors = []
+    
+    for request_id in request_ids:
+        try:
+            if request_id not in hitl_requests:
+                errors.append(f"Request {request_id} not found")
+                continue
+                
+            data = hitl_requests[request_id]
+            
+            if data["status"] != "pending":
+                errors.append(f"Request {request_id} is {data['status']}")
+                continue
+            
+            # Approve the request
+            data["status"] = "completed"
+            data["result"] = {
+                "approved": True,
+                "reviewer_id": user_id,
+                "confidence": 0.8,  # Default confidence for batch approval
+                "comments": "Batch approved",
+                "modifications": {},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            approved_requests.append(request_id)
+            
+            logger.info(
+                "Batch approved HITL request",
+                request_id=request_id,
+                user_id=user_id
+            )
+            
+        except Exception as e:
+            errors.append(f"Error approving {request_id}: {str(e)}")
+    
+    return {
+        "approved_requests": approved_requests,
+        "approved_count": len(approved_requests),
+        "errors": errors,
+        "error_count": len(errors)
+    }
+
+
+@app.get("/hitl/statistics")
+async def get_hitl_statistics():
+    """Get HITL system statistics"""
+    stats = {
+        "total_requests": len(hitl_requests),
+        "pending": 0,
+        "completed": 0,
+        "expired": 0,
+        "by_type": {},
+        "by_priority": {},
+        "average_confidence": 0.0,
+        "auto_approved_count": 0
+    }
+    
+    confidences = []
+    
+    for data in hitl_requests.values():
+        status = data["status"]
+        request_type = data["type"]
+        priority = data["priority"]
+        
+        stats[status] = stats.get(status, 0) + 1
+        stats["by_type"][request_type] = stats["by_type"].get(request_type, 0) + 1
+        stats["by_priority"][priority] = stats["by_priority"].get(priority, 0) + 1
+        
+        # Count auto-approved requests
+        if status == "completed" and data.get("result", {}).get("reviewer_id") == "aitl-system":
+            stats["auto_approved_count"] += 1
+        
+        # Collect confidence scores
+        if status == "completed":
+            confidence = data.get("result", {}).get("confidence", 0)
+            if confidence:
+                confidences.append(confidence)
+    
+    if confidences:
+        stats["average_confidence"] = sum(confidences) / len(confidences)
+    
+    return stats
 
 
 @app.post("/generate/capsule")

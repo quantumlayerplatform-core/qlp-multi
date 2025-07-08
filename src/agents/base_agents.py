@@ -53,6 +53,64 @@ class Agent:
     async def execute(self, task: Task, context: Dict[str, Any]) -> TaskResult:
         """Execute a task - to be implemented by subclasses"""
         raise NotImplementedError
+    
+    def _detect_language_from_task(self, description: str) -> str:
+        """Detect programming language from task description"""
+        desc_lower = description.lower()
+        
+        # Language detection patterns (order matters - more specific first)
+        language_patterns = {
+            "javascript": ["javascript", "js", "node.js", "nodejs", "express", "react", "vue", "angular", "npm"],
+            "typescript": ["typescript", "ts", "angular", "nest.js", "nestjs"],
+            "python": ["python", "flask", "django", "fastapi", "pandas", "numpy", "tensorflow", "pytorch"],
+            "java": ["java", "spring", "springboot", "maven", "gradle", "hibernate"],
+            "go": ["go", "golang", "gin", "gorilla", "chi"],
+            "rust": ["rust", "cargo", "tokio", "serde", "actix"],
+            "cpp": ["c++", "cpp", "cmake", "boost"],
+            "c": ["c language", " c "],
+            "csharp": ["c#", "csharp", ".net", "dotnet", "asp.net"],
+            "php": ["php", "laravel", "symfony", "composer"],
+            "ruby": ["ruby", "rails", "gem"],
+            "swift": ["swift", "ios", "xcode"],
+            "kotlin": ["kotlin", "android"],
+            "scala": ["scala", "akka", "play"],
+            "r": ["r language", "rstudio", "ggplot"],
+            "sql": ["sql", "mysql", "postgresql", "sqlite", "database query"],
+            "shell": ["bash", "shell script", "zsh", "sh"]
+        }
+        
+        # Check for explicit language mentions
+        for language, patterns in language_patterns.items():
+            if any(pattern in desc_lower for pattern in patterns):
+                return language
+        
+        # Framework-specific detection
+        if any(framework in desc_lower for framework in ["express", "koa", "fastify"]):
+            return "javascript"
+        elif any(framework in desc_lower for framework in ["react", "vue", "angular"]):
+            return "javascript"
+        elif any(framework in desc_lower for framework in ["spring", "springboot"]):
+            return "java"
+        elif any(framework in desc_lower for framework in ["flask", "django", "fastapi"]):
+            return "python"
+        elif any(framework in desc_lower for framework in ["gin", "echo", "fiber"]):
+            return "go"
+        elif any(framework in desc_lower for framework in ["actix", "warp", "rocket"]):
+            return "rust"
+        
+        # API patterns
+        if any(api in desc_lower for api in ["rest api", "api", "endpoint"]):
+            if any(keyword in desc_lower for keyword in ["node", "express", "js"]):
+                return "javascript"
+            elif any(keyword in desc_lower for keyword in ["python", "flask", "django"]):
+                return "python"
+            elif any(keyword in desc_lower for keyword in ["java", "spring"]):
+                return "java"
+            elif any(keyword in desc_lower for keyword in ["go", "golang"]):
+                return "go"
+        
+        # Default to Python if no clear language is detected
+        return "python"
 
 
 class T0Agent(Agent):
@@ -117,18 +175,22 @@ class T0Agent(Agent):
                        model=model,
                        provider=provider.value)
             
+            # Include detected language in output
+            detected_language = self._detect_language_from_task(task.description)
+            
             return TaskResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED,
                 output_type="code",
-                output={"content": output},
+                output={"content": output, "language": detected_language},
                 execution_time=execution_time,
                 agent_tier_used=self.tier,
                 confidence_score=0.7,  # T0 agents have lower confidence
                 metadata={
                     "agent_id": self.agent_id,
                     "model": model,
-                    "provider": provider.value
+                    "provider": provider.value,
+                    "detected_language": detected_language
                 }
             )
             
@@ -157,6 +219,9 @@ class T0Agent(Agent):
     
     def _build_prompt(self, task: Task, context: Dict[str, Any]) -> str:
         """Build a simple prompt for T0 tasks"""
+        # Enhanced language detection from task description
+        detected_language = self._detect_language_from_task(task.description)
+        
         prompt = f"Task: {task.description}\n\n"
         
         if context:
@@ -165,35 +230,39 @@ class T0Agent(Agent):
                 prompt += f"- {key}: {value}\n"
             prompt += "\n"
         
-        prompt += """IMPORTANT: Generate ACTUAL EXECUTABLE CODE, not directory structures or project layouts.
+        prompt += f"""LANGUAGE DETECTION: Based on the task description, the required language is: {detected_language}
+
+CRITICAL REQUIREMENT: You MUST generate code in {detected_language} language only.
+
+IMPORTANT: Generate ACTUAL EXECUTABLE CODE, not directory structures or project layouts.
 
 Requirements:
-- Provide complete, working Python code
-- Include proper imports, functions, and classes
+- Generate complete, working code in {detected_language} language
+- Use {detected_language}-specific syntax, imports, and conventions
+- Include proper imports, functions, and classes for {detected_language}
 - Do NOT provide directory listings, file structures, or project layouts
-- Do NOT use placeholder comments like "# implement this"
-- Generate real, functional implementation
+- Do NOT use placeholder comments like "# implement this" or "// TODO"
+- Generate real, functional implementation in {detected_language}
 
 Example of what NOT to do:
-```
-src/
-├── main.py
-├── __init__.py
-└── tests/
-```
+- Directory listings or file structures
+- Placeholder comments like "# implement this" or "// TODO: implement"
+- Incomplete or pseudo-code
+- Markdown formatting with backticks
+- Code in wrong language (must be {detected_language})
 
 Example of what TO do:
-```python
-from fastapi import FastAPI
+- Complete, functional {detected_language} code
+- Proper {detected_language} imports and dependencies
+- Real implementation using {detected_language} syntax
 
-app = FastAPI()
+IMPORTANT: 
+1. Generate code in {detected_language} language ONLY
+2. Output ONLY the raw {detected_language} code without any markdown formatting, backticks, or code block markers
+3. Do not wrap the code in ```{detected_language} or ``` blocks
+4. Generate complete, executable {detected_language} code
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
-```
-
-Generate the complete, executable code now:"""
+Generate the complete, executable {detected_language} code now:"""
         
         return prompt
 
@@ -269,6 +338,13 @@ class T1Agent(Agent):
             
             execution_time = (datetime.utcnow() - start_time).total_seconds()
             
+            # Include detected language in output
+            detected_language = self._detect_language_from_task(task.description)
+            
+            # Add language to output if not already present
+            if isinstance(parsed_output["content"], dict) and "language" not in parsed_output["content"]:
+                parsed_output["content"]["language"] = detected_language
+            
             return TaskResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED,
@@ -279,7 +355,8 @@ class T1Agent(Agent):
                 confidence_score=0.85,
                 metadata={
                     "agent_id": self.agent_id,
-                    "patterns_used": len(similar_patterns)
+                    "patterns_used": len(similar_patterns),
+                    "detected_language": detected_language
                 }
             )
             
@@ -298,6 +375,9 @@ class T1Agent(Agent):
     
     def _build_enhanced_prompt(self, task: Task, context: Dict[str, Any], patterns: List[Dict]) -> str:
         """Build an enhanced prompt with context and patterns"""
+        # Enhanced language detection from task description
+        detected_language = self._detect_language_from_task(task.description)
+        
         prompt = f"Task: {task.description}\n\n"
         
         if context:
@@ -312,40 +392,75 @@ class T1Agent(Agent):
                 prompt += f"- Pattern: {pattern['description']}\n"
                 prompt += f"  Code: {pattern['code'][:200]}...\n\n"
         
-        prompt += """
+        # Get language-specific example
+        example_code, example_tests, example_deps = self._get_language_example(detected_language)
+        
+        prompt += f"""
+LANGUAGE DETECTION: Based on the task description, the required language is: {detected_language}
+
+CRITICAL REQUIREMENT: You MUST generate code in {detected_language} language only.
+
 CRITICAL: Generate ACTUAL EXECUTABLE CODE, NOT directory structures or file layouts.
 
 Requirements:
-- Provide complete, working Python code with real implementations
-- Include all necessary imports and proper error handling
+- Generate complete, working code in {detected_language} language
+- Use {detected_language}-specific syntax, imports, and conventions
+- Include all necessary imports and proper error handling for {detected_language}
 - Do NOT provide directory listings, project structures, or placeholders
-- Do NOT use comments like "# implement this" or "# add code here"
-- Generate functional, production-ready code
+- Do NOT use comments like "# implement this" or "// TODO: implement"
+- Generate functional, production-ready {detected_language} code
 
 Generate a complete solution including:
-1. Main implementation code (ACTUAL CODE, not structure)
-2. Error handling and validation
+1. Main implementation code (ACTUAL {detected_language} CODE, not structure)
+2. Error handling and validation in {detected_language}
 3. Brief documentation
-4. All necessary imports and dependencies
+4. All necessary {detected_language} imports and dependencies
 
 Format your response as JSON:
-{
-    "code": "complete executable Python code with imports, classes, functions",
-    "tests": "actual test code with assertions and test cases",
+{{
+    "code": "complete executable {detected_language} code with imports, classes, functions",
+    "tests": "actual {detected_language} test code with assertions and test cases",
     "documentation": "brief explanation of the implementation",
-    "dependencies": ["list", "of", "required", "packages"]
-}
+    "dependencies": ["list", "of", "required", "{detected_language}", "packages"]
+}}
 
-EXAMPLE OF GOOD RESPONSE:
-{
-    "code": "from fastapi import FastAPI, HTTPException\\nfrom pydantic import BaseModel\\n\\napp = FastAPI()\\n\\nclass User(BaseModel):\\n    name: str\\n    email: str\\n\\n@app.post('/users')\\ndef create_user(user: User):\\n    return {'message': 'User created', 'user': user}",
-    "tests": "import pytest\\nfrom fastapi.testclient import TestClient\\nfrom main import app\\n\\nclient = TestClient(app)\\n\\ndef test_create_user():\\n    response = client.post('/users', json={'name': 'John', 'email': 'john@example.com'})\\n    assert response.status_code == 200",
-    "documentation": "FastAPI application with user creation endpoint",
-    "dependencies": ["fastapi", "pydantic"]
-}
+EXAMPLE OF GOOD RESPONSE FOR {detected_language.upper()}:
+{{
+    "code": "{example_code}",
+    "tests": "{example_tests}",
+    "documentation": "{detected_language} application with proper implementation",
+    "dependencies": {example_deps}
+}}
 """
         
         return prompt
+    
+    def _get_language_example(self, language: str) -> Tuple[str, str, str]:
+        """Get language-specific example code for prompting"""
+        examples = {
+            "javascript": (
+                "const express = require('express');\\nconst app = express();\\n\\napp.use(express.json());\\n\\napp.post('/users', (req, res) => {\\n    const { name, email } = req.body;\\n    res.json({ message: 'User created', user: { name, email } });\\n});\\n\\napp.listen(3000, () => console.log('Server running on port 3000'));",
+                "const request = require('supertest');\\nconst app = require('./app');\\n\\ndescribe('POST /users', () => {\\n    it('should create a user', async () => {\\n        const response = await request(app)\\n            .post('/users')\\n            .send({ name: 'John', email: 'john@example.com' });\\n        expect(response.status).toBe(200);\\n    });\\n});",
+                '["express", "supertest"]'
+            ),
+            "java": (
+                "import org.springframework.boot.SpringApplication;\\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\\nimport org.springframework.web.bind.annotation.*;\\n\\n@SpringBootApplication\\n@RestController\\npublic class Application {\\n    @PostMapping(\"/users\")\\n    public String createUser(@RequestBody User user) {\\n        return \"User created: \" + user.getName();\\n    }\\n\\n    public static void main(String[] args) {\\n        SpringApplication.run(Application.class, args);\\n    }\\n}",
+                "import org.junit.jupiter.api.Test;\\nimport org.springframework.boot.test.context.SpringBootTest;\\nimport static org.junit.jupiter.api.Assertions.*;\\n\\n@SpringBootTest\\nclass ApplicationTest {\\n    @Test\\n    void testCreateUser() {\\n        User user = new User(\"John\", \"john@example.com\");\\n        assertNotNull(user);\\n    }\\n}",
+                '["spring-boot-starter-web", "spring-boot-starter-test"]'
+            ),
+            "go": (
+                "package main\\n\\nimport (\\n    \"encoding/json\"\\n    \"net/http\"\\n    \"github.com/gin-gonic/gin\"\\n)\\n\\ntype User struct {\\n    Name  string `json:\"name\"`\\n    Email string `json:\"email\"`\\n}\\n\\nfunc createUser(c *gin.Context) {\\n    var user User\\n    c.ShouldBindJSON(&user)\\n    c.JSON(http.StatusOK, gin.H{\"message\": \"User created\", \"user\": user})\\n}\\n\\nfunc main() {\\n    r := gin.Default()\\n    r.POST(\"/users\", createUser)\\n    r.Run(\":8080\")\\n}",
+                "package main\\n\\nimport (\\n    \"testing\"\\n    \"net/http/httptest\"\\n    \"github.com/gin-gonic/gin\"\\n)\\n\\nfunc TestCreateUser(t *testing.T) {\\n    gin.SetMode(gin.TestMode)\\n    r := gin.Default()\\n    r.POST(\"/users\", createUser)\\n    // Add test implementation\\n}",
+                '["gin"]'
+            ),
+            "python": (
+                "from fastapi import FastAPI, HTTPException\\nfrom pydantic import BaseModel\\n\\napp = FastAPI()\\n\\nclass User(BaseModel):\\n    name: str\\n    email: str\\n\\n@app.post('/users')\\ndef create_user(user: User):\\n    return {'message': 'User created', 'user': user}",
+                "import pytest\\nfrom fastapi.testclient import TestClient\\nfrom main import app\\n\\nclient = TestClient(app)\\n\\ndef test_create_user():\\n    response = client.post('/users', json={'name': 'John', 'email': 'john@example.com'})\\n    assert response.status_code == 200",
+                '["fastapi", "pydantic"]'
+            )
+        }
+        
+        return examples.get(language, examples["python"])
     
     def _parse_output(self, output: str) -> Dict[str, Any]:
         """Parse structured output from LLM"""

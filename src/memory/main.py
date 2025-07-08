@@ -493,9 +493,16 @@ async def get_task_performance(
 @app.post("/store/capsule")
 async def store_capsule(capsule_data: Dict[str, Any]):
     """Store a QLCapsule"""
-    capsule = QLCapsule(**capsule_data)
-    await memory_service.store_capsule(capsule)
-    return {"status": "stored"}
+    try:
+        capsule = QLCapsule(**capsule_data)
+        await memory_service.store_capsule(capsule)
+        return {"status": "stored", "capsule_id": capsule.id}
+    except ValueError as e:
+        logger.error(f"Invalid capsule data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid capsule data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to store capsule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to store capsule: {str(e)}")
 
 
 @app.post("/store/metrics")
