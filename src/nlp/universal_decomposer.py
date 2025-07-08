@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 
 from src.common.config import settings
-from src.common.models import Task, TaskType, TaskStatus, ExecutionRequest
+from src.common.models import Task, TaskStatus, ExecutionRequest
 from src.memory.client import VectorMemoryClient
 
 logger = structlog.get_logger()

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 import asyncio
+import time
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -41,6 +42,8 @@ from src.memory.client import VectorMemoryClient
 from src.agents.client import AgentFactoryClient
 from src.validation.client import ValidationMeshClient
 # from src.orchestrator.aitl_endpoints import include_aitl_routes
+from src.nlp.extended_advanced_patterns import ExtendedAdvancedUniversalNLPEngine
+from src.nlp.pattern_selection_engine import PatternSelectionEngine, PatternType
 
 logger = structlog.get_logger()
 
@@ -133,10 +136,12 @@ class MetaOrchestrator:
         self.memory = memory_client
         self.agents = agent_client
         self.validation = validation_client
+        self.extended_nlp = ExtendedAdvancedUniversalNLPEngine()
+        self.pattern_selector = PatternSelectionEngine()
         
     async def decompose_request(self, request: ExecutionRequest) -> DecompositionResult:
-        """Decompose NLP request into atomic tasks using LLM"""
-        logger.info("Decomposing request", request_id=request.id)
+        """Decompose NLP request into atomic tasks using intelligent pattern selection"""
+        logger.info("Decomposing request with intelligent pattern selection", request_id=request.id)
         
         # Search for similar past requests
         similar_requests = await self.memory.search_similar_requests(
@@ -147,6 +152,275 @@ class MetaOrchestrator:
         # Build context from past executions
         context = self._build_decomposition_context(similar_requests)
         
+        # Step 1: Analyze request characteristics for pattern selection
+        try:
+            characteristics = await self.pattern_selector.analyze_request_characteristics(
+                request.description, 
+                {"similar_requests": similar_requests, "context": context}
+            )
+            
+            # Step 2: Get pattern recommendations
+            pattern_recommendations = await self.pattern_selector.recommend_patterns(
+                characteristics, 
+                max_patterns=5,
+                budget_constraint=3.0
+            )
+            
+            logger.info("Pattern selection complete", 
+                       selected_patterns=len(pattern_recommendations),
+                       top_pattern=pattern_recommendations[0].pattern.value if pattern_recommendations else "none")
+            
+            # Step 3: Apply only the recommended patterns
+            if pattern_recommendations:
+                extended_analysis = await self.extended_nlp.targeted_analysis(
+                    request.description,
+                    {"similar_requests": similar_requests, "context": context},
+                    selected_patterns=[rec.pattern for rec in pattern_recommendations]
+                )
+                
+                # Use targeted analysis to inform decomposition
+                if extended_analysis and extended_analysis.get("reasoning_insights"):
+                    reasoning_insights = extended_analysis["reasoning_insights"]
+                    logger.info("Targeted reasoning insights", 
+                               patterns_used=len(reasoning_insights),
+                               confidence=extended_analysis.get("confidence", 0.0))
+                    
+                    # Integrate reasoning insights into decomposition process
+                    enhanced_description = self._enhance_description_with_reasoning(
+                        request.description, reasoning_insights
+                    )
+                    
+                    # Use enhanced description for decomposition
+                    decomposition_result = await self._decompose_with_pattern_selection(
+                        enhanced_description, context, reasoning_insights, pattern_recommendations
+                    )
+                    
+                    return decomposition_result
+                    
+        except Exception as e:
+            logger.warning("Pattern selection failed, falling back to standard decomposition", 
+                         error=str(e))
+        
+        # Fallback to standard decomposition
+        return await self._standard_decomposition(request, context)
+    
+    def _enhance_description_with_reasoning(self, description: str, reasoning_insights: List[Dict]) -> str:
+        """Enhance description with insights from extended reasoning patterns"""
+        enhancements = []
+        
+        for insight in reasoning_insights:
+            pattern_name = insight.get("pattern", "unknown")
+            key_insights = insight.get("key_insights", [])
+            
+            if key_insights:
+                enhancements.append(f"[{pattern_name}] {'; '.join(key_insights[:3])}")
+        
+        if enhancements:
+            enhanced = f"{description}\n\nReasoning Insights:\n" + "\n".join(enhancements)
+            return enhanced
+        
+        return description
+    
+    async def _decompose_with_pattern_selection(self, enhanced_description: str, context: List[Dict], reasoning_insights: List[Dict], pattern_recommendations: List) -> DecompositionResult:
+        """Decompose using pattern selection insights"""
+        # Extract key patterns and constraints from reasoning insights
+        complexity_indicators = []
+        constraint_patterns = []
+        uncertainty_factors = []
+        
+        for insight in reasoning_insights:
+            pattern_name = insight.get("pattern", "")
+            if "complexity" in pattern_name.lower() or "hierarchy" in pattern_name.lower():
+                complexity_indicators.extend(insight.get("key_insights", []))
+            elif "constraint" in pattern_name.lower():
+                constraint_patterns.extend(insight.get("key_insights", []))
+            elif "uncertainty" in pattern_name.lower():
+                uncertainty_factors.extend(insight.get("key_insights", []))
+        
+        # Build pattern selection context
+        pattern_context = []
+        for rec in pattern_recommendations:
+            pattern_context.append(f"- {rec.pattern.value}: {rec.reasoning} (confidence: {rec.confidence:.2f})")
+        
+        # Build enhanced system prompt with pattern selection information
+        system_prompt = f"""You are an expert at decomposing software development requests into atomic tasks using intelligently selected reasoning patterns.
+
+PATTERN SELECTION RESULTS:
+The following patterns were selected for this request:
+{chr(10).join(pattern_context)}
+
+ENHANCED ANALYSIS:
+Complexity Indicators: {complexity_indicators[:5]}
+Constraint Patterns: {constraint_patterns[:5]}
+Uncertainty Factors: {uncertainty_factors[:3]}
+
+Given this targeted pattern selection and enhanced understanding, break down the request into specific, executable tasks.
+
+Output a JSON structure with:
+- tasks: array of task objects with fields:
+  - id: string (unique identifier, e.g., "task-1", "task-2")
+  - type: string (one of: code_generation, test_creation, documentation, validation, deployment)
+  - description: string (clear description of what needs to be done)
+  - estimated_complexity: string (one of: trivial, simple, medium, complex, meta)
+  - reasoning_applied: string (which reasoning pattern influenced this task)
+  - pattern_confidence: float (confidence from pattern selection)
+- dependencies: object mapping task_id to array of dependency task_ids
+- metadata: object with additional context including selected_patterns_used
+
+IMPORTANT: All id and estimated_complexity values MUST be strings, not numbers!
+Use the pattern selection insights to inform task complexity and dependencies.
+"""
+        
+        # Use deployment name for Azure OpenAI, model name for OpenAI
+        model = settings.AZURE_OPENAI_DEPLOYMENT_NAME if settings.AZURE_OPENAI_ENDPOINT else "gpt-4"
+        
+        response = await self.openai.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": enhanced_description}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            timeout=60.0
+        )
+        
+        decomposition = json.loads(response.choices[0].message.content)
+        
+        # Convert to Task objects with pattern selection metadata
+        tasks = []
+        for task_data in decomposition["tasks"]:
+            task_id = task_data.get("id", str(uuid4()))
+            if not isinstance(task_id, str):
+                task_id = str(task_id)
+            
+            complexity = task_data.get("estimated_complexity", "medium")
+            if not isinstance(complexity, str):
+                complexity = str(complexity)
+            
+            # Enhanced metadata with pattern selection information
+            metadata = task_data.get("metadata", {})
+            metadata["reasoning_applied"] = task_data.get("reasoning_applied", "standard")
+            metadata["pattern_confidence"] = task_data.get("pattern_confidence", 0.0)
+            metadata["pattern_selection_used"] = True
+            metadata["selected_patterns"] = [rec.pattern.value for rec in pattern_recommendations]
+            
+            task = Task(
+                id=task_id,
+                type=task_data["type"],
+                description=task_data["description"],
+                complexity=complexity,
+                metadata=metadata
+            )
+            tasks.append(task)
+        
+        # Enhanced metadata for the decomposition result
+        result_metadata = decomposition.get("metadata", {})
+        result_metadata["selected_patterns_used"] = [rec.pattern.value for rec in pattern_recommendations]
+        result_metadata["pattern_selection_applied"] = True
+        result_metadata["total_pattern_confidence"] = sum(rec.confidence for rec in pattern_recommendations)
+        result_metadata["avg_pattern_confidence"] = sum(rec.confidence for rec in pattern_recommendations) / len(pattern_recommendations)
+        
+        return DecompositionResult(
+            tasks=tasks,
+            dependencies=decomposition["dependencies"],
+            metadata=result_metadata
+        )
+    
+    async def _decompose_with_enhanced_understanding(self, enhanced_description: str, context: List[Dict], reasoning_insights: List[Dict]) -> DecompositionResult:
+        """Decompose using enhanced understanding from extended reasoning"""
+        # Extract key patterns and constraints from reasoning insights
+        complexity_indicators = []
+        constraint_patterns = []
+        uncertainty_factors = []
+        
+        for insight in reasoning_insights:
+            pattern_name = insight.get("pattern", "")
+            if "complexity" in pattern_name.lower() or "hierarchy" in pattern_name.lower():
+                complexity_indicators.extend(insight.get("key_insights", []))
+            elif "constraint" in pattern_name.lower() or "uncertainty" in pattern_name.lower():
+                constraint_patterns.extend(insight.get("key_insights", []))
+            elif "uncertainty" in pattern_name.lower():
+                uncertainty_factors.extend(insight.get("key_insights", []))
+        
+        # Build enhanced system prompt
+        system_prompt = f"""You are an expert at decomposing software development requests into atomic tasks using advanced reasoning patterns.
+
+ENHANCED ANALYSIS:
+Complexity Indicators: {complexity_indicators[:5]}
+Constraint Patterns: {constraint_patterns[:5]}
+Uncertainty Factors: {uncertainty_factors[:3]}
+
+Given this enhanced understanding, break down the request into specific, executable tasks.
+
+Output a JSON structure with:
+- tasks: array of task objects with fields:
+  - id: string (unique identifier, e.g., "task-1", "task-2")
+  - type: string (one of: code_generation, test_creation, documentation, validation, deployment)
+  - description: string (clear description of what needs to be done)
+  - estimated_complexity: string (one of: trivial, simple, medium, complex, meta)
+  - reasoning_applied: string (which reasoning pattern influenced this task)
+- dependencies: object mapping task_id to array of dependency task_ids
+- metadata: object with additional context including reasoning_patterns_used
+
+IMPORTANT: All id and estimated_complexity values MUST be strings, not numbers!
+Consider the uncertainty factors when determining task complexity and dependencies.
+"""
+        
+        # Use deployment name for Azure OpenAI, model name for OpenAI
+        model = settings.AZURE_OPENAI_DEPLOYMENT_NAME if settings.AZURE_OPENAI_ENDPOINT else "gpt-4"
+        
+        response = await self.openai.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": enhanced_description}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            timeout=60.0
+        )
+        
+        decomposition = json.loads(response.choices[0].message.content)
+        
+        # Convert to Task objects with enhanced metadata
+        tasks = []
+        for task_data in decomposition["tasks"]:
+            task_id = task_data.get("id", str(uuid4()))
+            if not isinstance(task_id, str):
+                task_id = str(task_id)
+            
+            complexity = task_data.get("estimated_complexity", "medium")
+            if not isinstance(complexity, str):
+                complexity = str(complexity)
+            
+            # Enhanced metadata with reasoning information
+            metadata = task_data.get("metadata", {})
+            metadata["reasoning_applied"] = task_data.get("reasoning_applied", "standard")
+            metadata["extended_reasoning_used"] = True
+            
+            task = Task(
+                id=task_id,
+                type=task_data["type"],
+                description=task_data["description"],
+                complexity=complexity,
+                metadata=metadata
+            )
+            tasks.append(task)
+        
+        # Enhanced metadata for the decomposition result
+        result_metadata = decomposition.get("metadata", {})
+        result_metadata["reasoning_patterns_used"] = [insight.get("pattern") for insight in reasoning_insights]
+        result_metadata["extended_reasoning_applied"] = True
+        
+        return DecompositionResult(
+            tasks=tasks,
+            dependencies=decomposition["dependencies"],
+            metadata=result_metadata
+        )
+    
+    async def _standard_decomposition(self, request: ExecutionRequest, context: List[Dict]) -> DecompositionResult:
+        """Standard decomposition fallback method"""
         # Use LLM to decompose
         system_prompt = """You are an expert at decomposing software development requests into atomic tasks.
 Given a user request, break it down into specific, executable tasks.
@@ -187,7 +461,7 @@ Example:
             ],
             response_format={"type": "json_object"},
             temperature=0.3,
-            timeout=45.0  # Add explicit timeout
+            timeout=45.0
         )
         
         decomposition = json.loads(response.choices[0].message.content)
@@ -195,12 +469,10 @@ Example:
         # Convert to Task objects
         tasks = []
         for task_data in decomposition["tasks"]:
-            # Ensure ID is a string
             task_id = task_data.get("id", str(uuid4()))
             if not isinstance(task_id, str):
                 task_id = str(task_id)
             
-            # Ensure complexity is a string
             complexity = task_data.get("estimated_complexity", "medium")
             if not isinstance(complexity, str):
                 complexity = str(complexity)
@@ -2460,6 +2732,337 @@ async def list_delivery_providers():
                 "options": ["branch", "create_mr", "private"]
             }
         ]
+    }
+
+
+# Extended Reasoning Endpoints
+@app.post("/analyze/extended-reasoning")
+async def analyze_extended_reasoning(request: Dict[str, Any]):
+    """Analyze a request using extended reasoning patterns"""
+    try:
+        description = request.get("description", "")
+        context = request.get("context", {})
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Initialize extended NLP engine
+        extended_nlp = ExtendedAdvancedUniversalNLPEngine()
+        
+        # Run comprehensive analysis
+        start_time = time.time()
+        analysis_result = await extended_nlp.comprehensive_analysis(description, context)
+        analysis_time = time.time() - start_time
+        
+        return {
+            "request_id": str(uuid4()),
+            "description": description,
+            "analysis_time": analysis_time,
+            "analysis_result": analysis_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Extended reasoning analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analyze/pattern/{pattern_name}")
+async def analyze_single_pattern(pattern_name: str, request: Dict[str, Any]):
+    """Analyze a request using a specific reasoning pattern"""
+    try:
+        description = request.get("description", "")
+        context = request.get("context", {})
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Initialize extended NLP engine
+        extended_nlp = ExtendedAdvancedUniversalNLPEngine()
+        
+        # Map pattern names to methods
+        pattern_methods = {
+            "abstraction": extended_nlp.abstraction_learner.build_hierarchy,
+            "emergent": extended_nlp.pattern_miner.mine_patterns,
+            "meta_learning": extended_nlp.meta_optimizer.optimize_learning_strategy,
+            "uncertainty": extended_nlp.uncertainty_quantifier.quantify_uncertainty,
+            "constraint": extended_nlp.constraint_solver.identify_constraints,
+            "semantic": extended_nlp.semantic_navigator.map_semantic_field,
+            "dialectical": extended_nlp.dialectical_reasoner.engage_dialectical_reasoning,
+            "quantum": extended_nlp.quantum_processor.create_superposition
+        }
+        
+        if pattern_name not in pattern_methods:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unknown pattern: {pattern_name}. Available: {list(pattern_methods.keys())}"
+            )
+        
+        # Run specific pattern analysis
+        start_time = time.time()
+        pattern_method = pattern_methods[pattern_name]
+        pattern_result = await pattern_method(description, context)
+        analysis_time = time.time() - start_time
+        
+        return {
+            "request_id": str(uuid4()),
+            "pattern_name": pattern_name,
+            "description": description,
+            "analysis_time": analysis_time,
+            "pattern_result": pattern_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Pattern analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analyze/patterns")
+async def list_available_patterns():
+    """List all available reasoning patterns"""
+    return {
+        "available_patterns": [
+            {
+                "name": "abstraction",
+                "description": "Multi-level concept organization and abstraction hierarchy learning",
+                "endpoint": "/analyze/pattern/abstraction"
+            },
+            {
+                "name": "emergent",
+                "description": "Discovering emergent patterns in complex data",
+                "endpoint": "/analyze/pattern/emergent"
+            },
+            {
+                "name": "meta_learning",
+                "description": "Learning how to learn better through meta-optimization",
+                "endpoint": "/analyze/pattern/meta_learning"
+            },
+            {
+                "name": "uncertainty",
+                "description": "Quantifying different types of uncertainty in reasoning",
+                "endpoint": "/analyze/pattern/uncertainty"
+            },
+            {
+                "name": "constraint",
+                "description": "Handling complex constraints through intelligent satisfaction",
+                "endpoint": "/analyze/pattern/constraint"
+            },
+            {
+                "name": "semantic",
+                "description": "Navigating semantic concept fields and relationships",
+                "endpoint": "/analyze/pattern/semantic"
+            },
+            {
+                "name": "dialectical",
+                "description": "Synthesizing opposing viewpoints through dialectical reasoning",
+                "endpoint": "/analyze/pattern/dialectical"
+            },
+            {
+                "name": "quantum",
+                "description": "Quantum-inspired superposition processing for complex reasoning",
+                "endpoint": "/analyze/pattern/quantum"
+            }
+        ],
+        "comprehensive_analysis": "/analyze/extended-reasoning"
+    }
+
+
+@app.post("/decompose/enhanced")
+async def decompose_with_enhanced_reasoning(request: Dict[str, Any]):
+    """Decompose a request using enhanced reasoning patterns"""
+    try:
+        # Parse request
+        description = request.get("description", "")
+        tenant_id = request.get("tenant_id", "default")
+        user_id = request.get("user_id", "system")
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Create ExecutionRequest
+        execution_request = ExecutionRequest(
+            id=str(uuid4()),
+            tenant_id=tenant_id,
+            user_id=user_id,
+            description=description,
+            metadata=request.get("metadata", {})
+        )
+        
+        # Initialize orchestrator and decompose
+        orchestrator = MetaOrchestrator()
+        start_time = time.time()
+        decomposition_result = await orchestrator.decompose_request(execution_request)
+        decomposition_time = time.time() - start_time
+        
+        # Convert to JSON-serializable format
+        return {
+            "request_id": execution_request.id,
+            "description": description,
+            "decomposition_time": decomposition_time,
+            "tasks": [
+                {
+                    "id": task.id,
+                    "type": task.type,
+                    "description": task.description,
+                    "complexity": task.complexity,
+                    "metadata": task.metadata
+                }
+                for task in decomposition_result.tasks
+            ],
+            "dependencies": decomposition_result.dependencies,
+            "metadata": decomposition_result.metadata,
+            "extended_reasoning_used": decomposition_result.metadata.get("extended_reasoning_applied", False),
+            "reasoning_patterns_used": decomposition_result.metadata.get("reasoning_patterns_used", []),
+            "pattern_selection_used": decomposition_result.metadata.get("pattern_selection_applied", False),
+            "selected_patterns": decomposition_result.metadata.get("selected_patterns_used", []),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Enhanced decomposition failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Pattern Selection Endpoints
+@app.post("/patterns/analyze")
+async def analyze_request_patterns(request: Dict[str, Any]):
+    """Analyze request characteristics for pattern selection"""
+    try:
+        description = request.get("description", "")
+        context = request.get("context", {})
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Initialize pattern selector
+        pattern_selector = PatternSelectionEngine()
+        
+        # Analyze request characteristics
+        start_time = time.time()
+        characteristics = await pattern_selector.analyze_request_characteristics(description, context)
+        analysis_time = time.time() - start_time
+        
+        return {
+            "request_id": str(uuid4()),
+            "description": description,
+            "analysis_time": analysis_time,
+            "characteristics": {
+                "complexity_level": characteristics.complexity_level,
+                "domain": characteristics.domain,
+                "ambiguity_level": characteristics.ambiguity_level,
+                "constraint_density": characteristics.constraint_density,
+                "conceptual_depth": characteristics.conceptual_depth,
+                "uncertainty_factors": characteristics.uncertainty_factors,
+                "conflicting_requirements": characteristics.conflicting_requirements,
+                "multi_perspective_needed": characteristics.multi_perspective_needed,
+                "learning_opportunity": characteristics.learning_opportunity,
+                "time_sensitivity": characteristics.time_sensitivity
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Pattern analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/patterns/recommend")
+async def recommend_patterns(request: Dict[str, Any]):
+    """Get pattern recommendations for a request"""
+    try:
+        description = request.get("description", "")
+        context = request.get("context", {})
+        max_patterns = request.get("max_patterns", 5)
+        budget_constraint = request.get("budget_constraint", 3.0)
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Initialize pattern selector
+        pattern_selector = PatternSelectionEngine()
+        
+        # Get recommendations
+        start_time = time.time()
+        characteristics = await pattern_selector.analyze_request_characteristics(description, context)
+        recommendations = await pattern_selector.recommend_patterns(
+            characteristics, 
+            max_patterns=max_patterns,
+            budget_constraint=budget_constraint
+        )
+        analysis_time = time.time() - start_time
+        
+        return {
+            "request_id": str(uuid4()),
+            "description": description,
+            "analysis_time": analysis_time,
+            "recommendations": [
+                {
+                    "pattern": rec.pattern.value,
+                    "confidence": rec.confidence,
+                    "reasoning": rec.reasoning,
+                    "priority": rec.priority,
+                    "computational_cost": rec.computational_cost,
+                    "expected_value": rec.expected_value
+                }
+                for rec in recommendations
+            ],
+            "total_patterns": len(recommendations),
+            "total_cost": sum(rec.computational_cost for rec in recommendations),
+            "avg_confidence": sum(rec.confidence for rec in recommendations) / len(recommendations) if recommendations else 0,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Pattern recommendation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/patterns/explain")
+async def explain_pattern_selection(request: Dict[str, Any]):
+    """Get detailed explanation of pattern selection for a request"""
+    try:
+        description = request.get("description", "")
+        context = request.get("context", {})
+        
+        if not description:
+            raise HTTPException(status_code=400, detail="Description is required")
+        
+        # Initialize pattern selector
+        pattern_selector = PatternSelectionEngine()
+        
+        # Get detailed explanation
+        start_time = time.time()
+        explanation = await pattern_selector.get_selection_explanation(description, context)
+        analysis_time = time.time() - start_time
+        
+        return {
+            "request_id": str(uuid4()),
+            "analysis_time": analysis_time,
+            "explanation": explanation,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Pattern explanation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/patterns/usage-guide")
+async def get_pattern_usage_guide():
+    """Get usage guide for all reasoning patterns"""
+    from src.nlp.pattern_selection_engine import PATTERN_USAGE_GUIDE
+    
+    return {
+        "patterns": PATTERN_USAGE_GUIDE,
+        "total_patterns": len(PATTERN_USAGE_GUIDE),
+        "pattern_types": list(PATTERN_USAGE_GUIDE.keys()),
+        "usage_notes": {
+            "selection_criteria": "Patterns are selected based on request characteristics analysis",
+            "budget_constraint": "Total computational cost should not exceed budget limit",
+            "confidence_threshold": "Only patterns with confidence > 0.3 are recommended",
+            "priority_system": "Priority 1-5 (1=highest) based on efficiency score"
+        }
     }
 
 

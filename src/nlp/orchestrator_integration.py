@@ -14,8 +14,7 @@ from src.common.models import (
     ExecutionPlan, 
     Task, 
     TaskResult,
-    TaskStatus,
-    TaskType
+    TaskStatus
 )
 from src.memory.client import VectorMemoryClient
 from src.common.config import settings
