@@ -64,6 +64,12 @@ services:
         condition: service_healthy
     networks:
       - qlp-network
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   temporal-ui:
     image: temporalio/ui:latest
@@ -250,12 +256,22 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
     depends_on:
-      - temporal
-      - orchestrator
+      temporal:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./logs:/app/logs
     networks:
       - qlp-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import src.orchestrator.worker_production; print('Worker OK')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # Monitoring and Management
   pgadmin:
