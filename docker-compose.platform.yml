@@ -175,6 +175,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - qlp-network
+    user: root
+    privileged: true  # Required for Docker access
 
   vector-memory:
     build:
