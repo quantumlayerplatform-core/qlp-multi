@@ -24,7 +24,7 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
 
 ### Quick Start
 ```bash
-# Activate virtual environment
+# Activate virtual environment (required before starting services)
 source venv/bin/activate
 
 # Start all services (simplest method)
@@ -32,25 +32,25 @@ source venv/bin/activate
 
 # Alternative startup methods
 ./start_all.sh          # Complete platform with all dependencies
-./run_quick.sh          # Quick start (assumes Docker running)
 make run-local          # Using Makefile
+docker-compose -f docker-compose.platform.yml up -d  # Docker only
 ```
 
 ### Testing
 ```bash
 # Quick validation tests
-python test_quick.py     # Basic functionality test
-python test_integration.py  # Service integration test
-python test_sandbox.py   # Sandbox execution test
+python test_docker_platform.py     # Test Docker deployment
+python test_production_system.py   # Production system test
+python test_end_to_end.py          # End-to-end functionality
+python test_complete_nlp_to_capsule_flow.py  # Complete NLP flow
 
-# Comprehensive testing
-make test               # Run all tests
-make test-unit          # Unit tests only
-make test-integration   # Integration tests
-make test-e2e          # End-to-end tests
+# Available test files (no pytest configuration found)
+python test_azure_integration.py   # Azure integration test
+python test_full_e2e.py            # Full end-to-end test
+python test_k8s_platform.py        # Kubernetes platform test
 
-# Run specific test
-pytest tests/unit/test_orchestrator.py::test_specific_function -v
+# Run tests with coverage (if pytest is available)
+pytest --cov=src tests/
 ```
 
 ### Service Management
@@ -63,35 +63,36 @@ curl http://localhost:8003/health  # Vector Memory
 curl http://localhost:8004/health  # Execution Sandbox
 
 # Service-specific operations
-./restart_failed.sh     # Restart failed services
 ./stop_all.sh          # Graceful shutdown
 ./cleanup_all.sh       # Complete cleanup
-./start_worker.sh      # Start Temporal worker
+./start_temporal_worker.sh  # Start Temporal worker
 ```
 
 ### Build and Deployment
 ```bash
+# Docker operations
+docker-compose -f docker-compose.platform.yml up -d  # Start all services
+docker-compose -f docker-compose.platform.yml down   # Stop all services
+docker-compose -f docker-compose.platform.yml logs -f  # View logs
+
+# Kubernetes deployment
+kubectl apply -f deployments/kubernetes/  # Deploy to K8s
+kubectl apply -f k8s/                    # Alternative K8s configs
+
 # Build operations
 make build             # Build all services
 make install-deps      # Install all dependencies
 make clean            # Clean build artifacts
-
-# Infrastructure
-make infra-up         # Start local infrastructure
-make infra-down       # Stop infrastructure
-make deploy           # Deploy to Kubernetes
 ```
 
 ### Code Quality
 ```bash
 # Format code
 black src/              # Auto-format Python code
-make format            # Format all code
 
 # Linting
 ruff check src/        # Fast Python linter
 pylint src/            # Comprehensive linting
-make lint              # Run all linters
 
 # Type checking
 mypy src/              # Type check Python code
@@ -221,36 +222,74 @@ Comprehensive endpoint documentation available in `docs/API_ENDPOINTS.md`.
 ## Common Debugging Commands
 
 ```bash
-# View service logs
+# View service logs (local development)
+tail -f logs/orchestrator.log
+tail -f logs/agents.log
+tail -f logs/validation.log
+tail -f logs/memory.log
+tail -f logs/sandbox.log
+
+# View Docker service logs
 docker logs qlp-orchestrator -f
 docker logs qlp-agent-factory -f
+docker logs qlp-validation-mesh -f
+docker logs qlp-vector-memory -f
+docker logs qlp-execution-sandbox -f
 
 # Check Temporal workflow status
 temporal workflow list
 temporal workflow describe -w <workflow-id>
 
-# Inspect vector memory
-curl http://localhost:8003/api/v1/memory/search -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"query": "your search query", "limit": 10}'
+# Test API endpoints
+curl http://localhost:8000/health  # Orchestrator health
+curl http://localhost:8000/docs    # API documentation
 
-# Test agent generation
-curl http://localhost:8001/api/v1/agents/generate -X POST \
+# Quick platform test
+curl -X POST http://localhost:8000/execute \
   -H "Content-Type: application/json" \
-  -d '{"task": "implement fizzbuzz", "tier": "T0"}'
+  -d '{
+    "tenant_id": "default",
+    "user_id": "test",
+    "description": "Write a hello world function in Python"
+  }'
 
-# Validate code snippet
-curl http://localhost:8002/api/v1/validate -X POST \
+# Generate capsule test
+curl -X POST http://localhost:8000/generate/capsule \
   -H "Content-Type: application/json" \
-  -d '{"code": "print(\"hello\")", "language": "python"}'
+  -d '{
+    "request_id": "test-request",
+    "tenant_id": "demo",
+    "user_id": "developer",
+    "project_name": "Test Project",
+    "description": "Simple test project",
+    "requirements": "Basic functionality",
+    "tech_stack": ["Python"]
+  }'
 ```
 
 ## Project Structure Reference
 
 Key directories to know:
-- `src/common/models/` - Shared Pydantic models for API contracts
+- `src/common/models.py` - Shared Pydantic models for API contracts
 - `src/common/config.py` - Centralized configuration management
-- `config/` - Environment-specific configurations
+- `src/orchestrator/` - Main orchestration service
+- `src/agents/` - Agent factory and AI model management
+- `src/validation/` - Code validation and quality checks
+- `src/memory/` - Vector memory and pattern recognition
+- `src/sandbox/` - Secure code execution environment
+- `src/agents/meta_prompts/` - Advanced prompt engineering system
+- `deployments/kubernetes/` - Kubernetes deployment manifests
+- `deployments/docker/` - Docker-specific configurations
 - `scripts/` - Automation and deployment scripts
-- `tests/fixtures/` - Test data and mocks
 - `docs/` - API and architecture documentation
+- `capsule_versions/` - Generated capsule version history
+- `logs/` - Service logs directory
+
+## Important Files
+
+- `docker-compose.platform.yml` - Complete platform Docker setup
+- `start.sh` - Quick service startup script
+- `start_all.sh` - Complete platform startup with dependencies
+- `requirements.txt` - Python dependencies
+- `Dockerfile` - Multi-service container build
+- `.env` - Environment variables (create from README instructions)

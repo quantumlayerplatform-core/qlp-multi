@@ -1147,9 +1147,9 @@ curl -X POST http://localhost:8000/api/endpoint \
                 "module": "commonjs",
                 "outDir": "./dist",
                 "rootDir": "./src",
-                "strict": true,
-                "esModuleInterop": true,
-                "skipLibCheck": true,
+                "strict": True,
+                "esModuleInterop": True,
+                "skipLibCheck": True,
                 "forceConsistentCasingInFileNames": True
             },
             "include": ["src/**/*"],
