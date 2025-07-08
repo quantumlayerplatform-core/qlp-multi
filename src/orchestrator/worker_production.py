@@ -506,115 +506,80 @@ async def execute_in_sandbox_activity(code: str, language: str, test_inputs: Opt
 
 
 @activity.defn
-async def request_human_review_activity(
+async def request_aitl_review_activity(
     task: Dict[str, Any], 
     result: Dict[str, Any], 
     validation: Dict[str, Any],
     reason: str
 ) -> Dict[str, Any]:
-    """Request human review through the HITL system"""
+    """Request AITL (AI-in-the-Loop) review directly - no human involvement"""
     import httpx
     from ..common.config import settings
     
-    activity.logger.info(f"Requesting human review for task: {task['task_id']}")
+    activity.logger.info(f"Requesting AITL review for task: {task['task_id']}")
     
-    # Prepare review context
-    review_context = {
-        "task": task,
-        "execution_result": result,
-        "validation_result": validation,
-        "reason": reason,
-        "code": None,
-        "issues": []
-    }
-    
-    # Extract code and issues
+    # Extract code from result
+    code = ""
     if result.get("output"):
         output = result.get("output", {})
         if isinstance(output, dict):
-            review_context["code"] = output.get("code", output.get("content", ""))
+            code = output.get("code", output.get("content", ""))
         else:
-            review_context["code"] = str(output)
+            code = str(output)
     
-    # Extract validation issues
-    for check in validation.get("checks", []):
-        if check.get("status") in ["failed", "warning"]:
-            review_context["issues"].append({
-                "type": check.get("name"),
-                "severity": check.get("severity", "warning"),
-                "message": check.get("message", "")
-            })
+    # Create AITL request data directly
+    aitl_request_data = {
+        "code": code,
+        "context": {
+            "task": task,
+            "validation_result": validation,
+            "execution_result": result,
+            "reason": reason
+        }
+    }
     
     async with httpx.AsyncClient(timeout=300.0) as client:
-        # Create HITL request
-        response = await client.post(
-            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/hitl/request",
-            json={
-                "type": "code_review",
-                "task_id": task["task_id"],
-                "priority": "high" if validation.get("confidence_score", 1) < 0.5 else "normal",
-                "context": review_context,
-                "questions": [
-                    "Is the generated code correct for the given requirements?",
-                    "Are there any security or performance concerns?",
-                    "Should this code be approved for production use?"
-                ],
-                "timeout_minutes": 60
-            }
+        activity.logger.info(f"Calling AITL intelligent review directly for task: {task['task_id']}")
+        
+        # Call the AITL intelligent review function directly via internal endpoint
+        aitl_response = await client.post(
+            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/internal/aitl-review",
+            json=aitl_request_data
         )
         
-        if response.status_code != 200:
-            activity.logger.error(f"Failed to create HITL request: {response.status_code}")
+        if aitl_response.status_code == 200:
+            aitl_result = aitl_response.json()
+            activity.logger.info(f"AITL direct review completed: {aitl_result.get('decision')} (confidence: {aitl_result.get('confidence')})")
+            
+            return {
+                "approved": aitl_result.get("decision") in ["approved", "approved_with_modifications"],
+                "reviewer": "aitl-system",
+                "confidence": aitl_result.get("confidence", 0),
+                "comments": aitl_result.get("feedback", ""),
+                "modifications": {
+                    "security_issues": aitl_result.get("security_issues", []),
+                    "modifications_required": aitl_result.get("modifications_required", []),
+                    "estimated_fix_time": aitl_result.get("estimated_fix_time", 15)
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "aitl_processed": True,
+                "decision": aitl_result.get("decision"),
+                "quality_score": aitl_result.get("quality_score", 0)
+            }
+        else:
+            activity.logger.error(f"AITL direct review failed: {aitl_response.status_code}")
+            # Fallback to simple approval for system errors
             return {
                 "approved": False,
-                "reviewer": "system",
-                "reason": "Failed to create review request",
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "reviewer": "aitl-system",
+                "confidence": 0.0,
+                "comments": "AITL system error - rejected for safety",
+                "modifications": {},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "aitl_processed": True,
+                "decision": "rejected",
+                "reason": "AITL system error"
             }
-        
-        hitl_request = response.json()
-        request_id = hitl_request.get("request_id")
-        
-        # Poll for response (with timeout)
-        max_attempts = 120  # 60 minutes with 30-second intervals
-        attempt = 0
-        
-        while attempt < max_attempts:
-            await asyncio.sleep(30)  # Check every 30 seconds
-            
-            status_response = await client.get(
-                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/hitl/status/{request_id}"
-            )
-            
-            if status_response.status_code == 200:
-                status_data = status_response.json()
-                
-                if status_data.get("status") == "completed":
-                    review_result = status_data.get("result", {})
-                    return {
-                        "approved": review_result.get("approved", False),
-                        "reviewer": review_result.get("reviewer_id", "unknown"),
-                        "confidence": review_result.get("confidence", 0),
-                        "comments": review_result.get("comments", ""),
-                        "modifications": review_result.get("modifications", {}),
-                        "timestamp": review_result.get("timestamp", datetime.utcnow().isoformat())
-                    }
-                elif status_data.get("status") == "expired":
-                    activity.logger.warning(f"HITL request {request_id} expired")
-                    break
-            
-            attempt += 1
-            
-            # Send heartbeat to prevent activity timeout
-            activity.heartbeat(f"Waiting for human review: attempt {attempt}/{max_attempts}")
-        
-        # Timeout - auto-reject for safety
-        return {
-            "approved": False,
-            "reviewer": "system",
-            "reason": "Review timeout - auto-rejected for safety",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
 
 
 @activity.defn
@@ -949,7 +914,7 @@ class QLPWorkflow:
                     reason = "Low confidence" if validation_result.get("confidence_score", 1) < 0.7 else "Critical issues found"
                     
                     review_result = await workflow.execute_activity(
-                        request_human_review_activity,
+                        request_aitl_review_activity,
                         args=[task, exec_result, validation_result, reason],
                         start_to_close_timeout=timedelta(hours=2),  # Allow time for human review
                         heartbeat_timeout=timedelta(minutes=1),
@@ -1233,7 +1198,7 @@ async def start_worker():
             execute_task_activity,
             validate_result_activity,
             execute_in_sandbox_activity,
-            request_human_review_activity,
+            request_aitl_review_activity,
             create_ql_capsule_activity,
             llm_clean_code_activity,
             prepare_delivery_activity

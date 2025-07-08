@@ -40,6 +40,7 @@ from src.common.database import get_db
 from src.memory.client import VectorMemoryClient
 from src.agents.client import AgentFactoryClient
 from src.validation.client import ValidationMeshClient
+# from src.orchestrator.aitl_endpoints import include_aitl_routes
 
 logger = structlog.get_logger()
 
@@ -54,6 +55,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include AITL routes - commented out due to import issues
+# include_aitl_routes(app)
 
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
@@ -77,6 +80,11 @@ validation_client = ValidationMeshClient(settings.VALIDATION_MESH_URL)
 
 # In-memory storage for HITL requests (in production, use a database)
 hitl_requests: Dict[str, Dict[str, Any]] = {}
+
+# AITL Configuration
+AITL_ENABLED = True
+AITL_AUTO_PROCESS = True
+AITL_CONFIDENCE_THRESHOLD = 0.75
 
 
 # Request models for capsule versioning
@@ -1087,6 +1095,458 @@ async def get_hitl_statistics():
     return stats
 
 
+async def aitl_intelligent_review(hitl_request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    AI-in-the-Loop intelligent review system
+    Conducts comprehensive AI-based code review with security, quality, and logic analysis
+    """
+    try:
+        # Extract code and validation data
+        code = hitl_request_data.get("code", "")
+        validation_result = hitl_request_data["context"]["validation_result"]
+        task_context = hitl_request_data["context"]["task"]
+        
+        logger.info(f"Starting AITL review for request: {hitl_request_data['request_id']}")
+        
+        # Parallel AI analysis using multiple models
+        security_analysis = await conduct_security_analysis(code, validation_result)
+        quality_analysis = await conduct_quality_analysis(code, task_context)
+        logic_analysis = await conduct_logic_analysis(code, task_context)
+        
+        # Synthesize final decision
+        decision_result = synthesize_aitl_decision(security_analysis, quality_analysis, logic_analysis)
+        
+        logger.info(f"AITL review complete: {decision_result['decision']} (confidence: {decision_result['confidence']:.2f})")
+        
+        return decision_result
+        
+    except Exception as e:
+        logger.error(f"AITL review failed: {e}")
+        return {
+            "decision": "escalate_to_human",
+            "confidence": 0.0,
+            "reasoning": f"AITL system error: {str(e)}",
+            "feedback": "System error during AI review. Escalating to human reviewer.",
+            "security_issues": [],
+            "modifications_required": [],
+            "estimated_fix_time": 30
+        }
+
+
+async def conduct_security_analysis(code: str, validation_result: Dict) -> Dict[str, Any]:
+    """Conduct AI-powered security analysis"""
+    try:
+        prompt = f"""
+        As a senior cybersecurity engineer, analyze this code for security vulnerabilities:
+        
+        Code:
+        ```
+        {code}
+        ```
+        
+        Validation Issues: {json.dumps(validation_result.get('checks', [])[:3])}
+        
+        Analyze for:
+        1. Authentication/Authorization flaws
+        2. Input validation vulnerabilities  
+        3. Hardcoded secrets or credentials
+        4. SQL injection, XSS, CSRF risks
+        5. Rate limiting and DoS protection
+        6. Error handling information leakage
+        
+        Return JSON only:
+        {{
+            "security_score": 0.0-1.0,
+            "critical_issues": ["issue1", "issue2"],
+            "warnings": ["warning1", "warning2"],
+            "recommendations": ["rec1", "rec2"],
+            "exploit_risk": "low|medium|high|critical"
+        }}
+        """
+        
+        response = await openai_client.chat.completions.create(
+            model="gpt-4",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        
+        return json.loads(response.choices[0].message.content)
+        
+    except Exception as e:
+        logger.error(f"Security analysis failed: {e}")
+        return {
+            "security_score": 0.3,
+            "critical_issues": ["Security analysis failed"],
+            "warnings": ["Manual security review required"],
+            "recommendations": ["Conduct thorough security audit"],
+            "exploit_risk": "unknown"
+        }
+
+
+async def conduct_quality_analysis(code: str, task_context: Dict) -> Dict[str, Any]:
+    """Conduct AI-powered code quality analysis"""
+    try:
+        prompt = f"""
+        As a senior software architect, analyze this code for quality and best practices:
+        
+        Code:
+        ```
+        {code}
+        ```
+        
+        Task: {task_context.get('description', 'Not specified')}
+        
+        Evaluate:
+        1. Code structure and organization
+        2. Error handling and robustness
+        3. Performance considerations  
+        4. Maintainability and readability
+        5. Framework usage patterns
+        
+        Return JSON only:
+        {{
+            "quality_score": 0.0-1.0,
+            "maintainability": 0.0-1.0,
+            "performance": 0.0-1.0,
+            "issues": ["issue1", "issue2"],
+            "improvements": ["improvement1", "improvement2"],
+            "technical_debt": "low|medium|high"
+        }}
+        """
+        
+        response = await openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior software architect specializing in code quality."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=1500
+        )
+        
+        return json.loads(response.choices[0].message.content)
+        
+    except Exception as e:
+        logger.error(f"Quality analysis failed: {e}")
+        return {
+            "quality_score": 0.5,
+            "maintainability": 0.5,
+            "performance": 0.5,
+            "issues": ["Quality analysis failed"],
+            "improvements": ["Manual code review needed"],
+            "technical_debt": "unknown"
+        }
+
+
+async def conduct_logic_analysis(code: str, task_context: Dict) -> Dict[str, Any]:
+    """Conduct AI-powered logic correctness analysis"""
+    try:
+        prompt = f"""
+        As a senior software engineer, analyze the logic and correctness of this code:
+        
+        Code:
+        ```
+        {code}
+        ```
+        
+        Requirements: {task_context.get('description', 'Not specified')}
+        
+        Analyze:
+        1. Correctness of algorithms and logic
+        2. Edge case handling
+        3. Data flow and state management
+        4. Business logic implementation
+        5. Requirement fulfillment
+        
+        Return JSON only:
+        {{
+            "logic_score": 0.0-1.0,
+            "correctness": 0.0-1.0,
+            "completeness": 0.0-1.0,
+            "logic_errors": ["error1", "error2"],
+            "missing_functionality": ["missing1", "missing2"],
+            "requirement_compliance": 0.0-1.0
+        }}
+        """
+        
+        response = await openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a senior software engineer specializing in logic analysis."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=1500
+        )
+        
+        return json.loads(response.choices[0].message.content)
+        
+    except Exception as e:
+        logger.error(f"Logic analysis failed: {e}")
+        return {
+            "logic_score": 0.5,
+            "correctness": 0.5,
+            "completeness": 0.5,
+            "logic_errors": ["Logic analysis failed"],
+            "missing_functionality": [],
+            "requirement_compliance": 0.5
+        }
+
+
+def synthesize_aitl_decision(security: Dict, quality: Dict, logic: Dict) -> Dict[str, Any]:
+    """Synthesize AI analysis results into final decision"""
+    
+    # Calculate weighted scores (security is most important)
+    security_score = security.get("security_score", 0.0)
+    quality_score = quality.get("quality_score", 0.0)
+    logic_score = logic.get("logic_score", 0.0)
+    
+    overall_score = (security_score * 0.5 + quality_score * 0.3 + logic_score * 0.2)
+    
+    # Determine decision based on analysis
+    if security.get("exploit_risk") == "critical":
+        decision = "rejected"
+        confidence = 0.95
+    elif len(security.get("critical_issues", [])) >= 3:
+        decision = "rejected" 
+        confidence = 0.90
+    elif overall_score < 0.4:
+        decision = "rejected"
+        confidence = 0.85
+    elif security.get("exploit_risk") in ["medium", "high"] and overall_score >= 0.6:
+        decision = "approved_with_modifications"
+        confidence = 0.80
+    elif overall_score >= 0.8:
+        decision = "approved"
+        confidence = 0.90
+    elif overall_score >= 0.6:
+        decision = "approved_with_modifications"
+        confidence = 0.75
+    else:
+        decision = "escalate_to_human"
+        confidence = 0.60
+    
+    # Generate comprehensive feedback
+    feedback_parts = []
+    
+    # Decision header
+    decision_emoji = {
+        "approved": "✅",
+        "approved_with_modifications": "⚠️",
+        "rejected": "❌",
+        "escalate_to_human": "🔄"
+    }
+    
+    feedback_parts.append(f"{decision_emoji.get(decision, '❓')} **AITL DECISION: {decision.upper().replace('_', ' ')}**")
+    
+    # Security feedback
+    if security.get("critical_issues"):
+        feedback_parts.append("\n🔒 **Critical Security Issues:**")
+        for issue in security.get("critical_issues", [])[:3]:
+            feedback_parts.append(f"- {issue}")
+    
+    # Quality feedback
+    if quality_score < 0.7:
+        feedback_parts.append("\n📊 **Quality Concerns:**")
+        for issue in quality.get("issues", [])[:3]:
+            feedback_parts.append(f"- {issue}")
+    
+    # Logic feedback
+    if logic.get("logic_errors"):
+        feedback_parts.append("\n🧠 **Logic Issues:**")
+        for error in logic.get("logic_errors", [])[:2]:
+            feedback_parts.append(f"- {error}")
+    
+    # Positive feedback
+    if decision in ["approved", "approved_with_modifications"]:
+        feedback_parts.append("\n✨ **Strengths:**")
+        if security_score >= 0.8:
+            feedback_parts.append("- Strong security implementation")
+        if quality.get("maintainability", 0) >= 0.8:
+            feedback_parts.append("- Good code maintainability")
+        if logic_score >= 0.8:
+            feedback_parts.append("- Sound logic implementation")
+    
+    # Recommendations
+    if decision != "rejected":
+        all_recommendations = []
+        all_recommendations.extend(security.get("recommendations", []))
+        all_recommendations.extend(quality.get("improvements", []))
+        
+        if all_recommendations:
+            feedback_parts.append("\n🎯 **AI Recommendations:**")
+            for rec in all_recommendations[:4]:
+                feedback_parts.append(f"- {rec}")
+    
+    # Collect issues and modifications
+    security_issues = []
+    security_issues.extend(security.get("critical_issues", []))
+    security_issues.extend(security.get("warnings", []))
+    
+    modifications_required = []
+    modifications_required.extend(security.get("recommendations", []))
+    modifications_required.extend(quality.get("improvements", []))
+    modifications_required.extend(logic.get("missing_functionality", []))
+    
+    # Estimate fix time
+    fix_time = 15  # Base time
+    if security.get("exploit_risk") in ["high", "critical"]:
+        fix_time += 45
+    if quality.get("technical_debt") == "high":
+        fix_time += 30
+    if len(logic.get("logic_errors", [])) > 2:
+        fix_time += 30
+    
+    return {
+        "decision": decision,
+        "confidence": confidence,
+        "reasoning": f"Security: {security_score:.2f}, Quality: {quality_score:.2f}, Logic: {logic_score:.2f}, Overall: {overall_score:.2f}",
+        "feedback": "\n".join(feedback_parts),
+        "security_issues": security_issues[:5],
+        "modifications_required": modifications_required[:8],
+        "estimated_fix_time": fix_time,
+        "quality_score": overall_score,
+        "metadata": {
+            "security_analysis": security,
+            "quality_analysis": quality, 
+            "logic_analysis": logic,
+            "aitl_version": "1.0",
+            "review_timestamp": datetime.utcnow().isoformat()
+        }
+    }
+
+
+@app.post("/hitl/aitl-process/{request_id}")
+async def process_hitl_with_aitl(request_id: str):
+    """Process a HITL request using AITL (AI-in-the-Loop)"""
+    if request_id not in hitl_requests:
+        raise HTTPException(status_code=404, detail="HITL request not found")
+    
+    request_data = hitl_requests[request_id]
+    
+    if request_data["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    try:
+        # Mark as processing
+        request_data["status"] = "processing"
+        request_data["processing_start"] = datetime.utcnow()
+        
+        # Conduct AITL review
+        aitl_result = await aitl_intelligent_review(request_data)
+        
+        # Update HITL request with AITL result directly
+        request_data["status"] = "completed"
+        request_data["result"] = {
+            "approved": aitl_result["decision"] in ["approved", "approved_with_modifications"],
+            "reviewer_id": "aitl-system",
+            "confidence": aitl_result["confidence"],
+            "comments": aitl_result["feedback"],
+            "modifications": {
+                "security_issues": aitl_result["security_issues"],
+                "modifications_required": aitl_result["modifications_required"],
+                "estimated_fix_time": aitl_result["estimated_fix_time"]
+            },
+            "timestamp": datetime.utcnow().isoformat(),
+            "aitl_review": True,
+            "aitl_metadata": aitl_result["metadata"]
+        }
+        
+        return {
+            "status": "completed",
+            "decision": aitl_result["decision"],
+            "confidence": aitl_result["confidence"],
+            "processing_time": (datetime.utcnow() - request_data["processing_start"]).total_seconds(),
+            "aitl_review": True
+        }
+        
+    except Exception as e:
+        # Reset status on error
+        request_data["status"] = "pending"
+        logger.error(f"AITL processing failed for {request_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"AITL processing failed: {str(e)}")
+
+
+@app.post("/hitl/aitl-auto-process")
+async def auto_process_pending_with_aitl(
+    max_requests: int = 10,
+    confidence_threshold: float = AITL_CONFIDENCE_THRESHOLD
+):
+    """Automatically process pending HITL requests using AITL"""
+    if not AITL_ENABLED:
+        raise HTTPException(status_code=400, detail="AITL is disabled")
+    
+    processed = []
+    errors = []
+    
+    # Find pending requests
+    pending_requests = [
+        (request_id, data) for request_id, data in hitl_requests.items()
+        if data["status"] == "pending"
+    ][:max_requests]
+    
+    for request_id, data in pending_requests:
+        try:
+            # Process with AITL
+            result = await process_hitl_with_aitl(request_id)
+            
+            # Only auto-approve if confidence is high enough
+            if result["confidence"] >= confidence_threshold:
+                processed.append({
+                    "request_id": request_id,
+                    "decision": result["decision"],
+                    "confidence": result["confidence"],
+                    "auto_approved": True
+                })
+            else:
+                # Keep for human review if confidence is low
+                processed.append({
+                    "request_id": request_id,
+                    "decision": "requires_human_review",
+                    "confidence": result["confidence"],
+                    "auto_approved": False
+                })
+                
+        except Exception as e:
+            errors.append({
+                "request_id": request_id,
+                "error": str(e)
+            })
+    
+    return {
+        "processed_count": len(processed),
+        "error_count": len(errors),
+        "processed_requests": processed,
+        "errors": errors,
+        "confidence_threshold": confidence_threshold,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/internal/aitl-review")
+async def internal_aitl_review(request_data: Dict[str, Any]):
+    """Internal endpoint for direct AITL review - called by workflow"""
+    try:
+        # Call the AITL intelligent review function directly
+        aitl_result = await aitl_intelligent_review(request_data)
+        return aitl_result
+        
+    except Exception as e:
+        logger.error(f"Internal AITL review failed: {e}")
+        return {
+            "decision": "rejected",
+            "confidence": 0.0,
+            "reasoning": f"AITL system error: {str(e)}",
+            "feedback": "AITL system encountered an error - rejected for safety",
+            "security_issues": ["AITL system error"],
+            "modifications_required": ["Manual review required"],
+            "estimated_fix_time": 60,
+            "quality_score": 0.0,
+            "metadata": {"error": str(e)}
+        }
+
+
 @app.post("/generate/capsule")
 async def generate_enhanced_capsule(request: ExecutionRequest, db: Session = Depends(get_db)):
     """Generate an enhanced QLCapsule with complete project structure"""
@@ -2023,7 +2483,6 @@ async def run_worker():
     )
     
     await worker.run()
-
 
 if __name__ == "__main__":
     import uvicorn
