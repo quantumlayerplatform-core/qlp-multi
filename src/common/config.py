@@ -148,6 +148,11 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = Field(default=4000)
     LLM_TIMEOUT: int = Field(default=120)
     
+    # AITL Configuration (AI-in-the-Loop)
+    AITL_ENABLED: bool = Field(default=False, description="Enable AITL review system")
+    AITL_AUTO_PROCESS: bool = Field(default=False, description="Auto-process AITL reviews")
+    AITL_CONFIDENCE_THRESHOLD: float = Field(default=0.75, description="Confidence threshold for AITL approval")
+    
     # LLM Provider Selection by Tier
     LLM_T0_PROVIDER: str = Field(default="groq", description="Provider for T0 agents")
     LLM_T1_PROVIDER: str = Field(default="openai", description="Provider for T1 agents")

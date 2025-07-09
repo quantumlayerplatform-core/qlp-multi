@@ -45,6 +45,7 @@ from src.validation.client import ValidationMeshClient
 from src.nlp.extended_advanced_patterns import ExtendedAdvancedUniversalNLPEngine
 from src.nlp.pattern_selection_engine import PatternSelectionEngine, PatternType
 from src.orchestrator.unified_optimization_engine import UnifiedOptimizationEngine, OptimizationContext
+from src.orchestrator.aitl_system import convert_hitl_to_aitl, AITLDecision
 
 logger = structlog.get_logger()
 
@@ -85,9 +86,9 @@ validation_client = ValidationMeshClient(settings.VALIDATION_MESH_URL)
 # In-memory storage for HITL requests (in production, use a database)
 hitl_requests: Dict[str, Dict[str, Any]] = {}
 
-# AITL Configuration - Temporarily disabled for unified optimization testing
-AITL_ENABLED = False
-AITL_AUTO_PROCESS = False
+# AITL Configuration
+AITL_ENABLED = True  # Enable AITL for sophisticated code review
+AITL_AUTO_PROCESS = True
 AITL_CONFIDENCE_THRESHOLD = 0.75
 
 
@@ -1530,17 +1531,42 @@ async def aitl_intelligent_review(hitl_request_data: Dict[str, Any]) -> Dict[str
     Conducts comprehensive AI-based code review with security, quality, and logic analysis
     """
     try:
+        logger.info(f"AITL function called with data keys: {list(hitl_request_data.keys())}")
+        
         # Extract code and validation data
         code = hitl_request_data.get("code", "")
-        validation_result = hitl_request_data["context"]["validation_result"]
-        task_context = hitl_request_data["context"]["task"]
+        logger.info(f"Extracted code length: {len(code)}")
         
-        logger.info(f"Starting AITL review for request: {hitl_request_data['request_id']}")
+        # Safely extract context data
+        context = hitl_request_data.get("context", {})
+        validation_result = context.get("validation_result", {})
+        task_context = context.get("task", {})
+        
+        # Handle both HITL request format and direct workflow format
+        request_id = hitl_request_data.get("request_id", 
+                                         hitl_request_data.get("task_id", 
+                                                             task_context.get("task_id", "unknown")))
+        
+        logger.info(f"Starting AITL review for request: {request_id}")
         
         # Parallel AI analysis using multiple models
-        security_analysis = await conduct_security_analysis(code, validation_result)
-        quality_analysis = await conduct_quality_analysis(code, task_context)
-        logic_analysis = await conduct_logic_analysis(code, task_context)
+        try:
+            security_analysis = await conduct_security_analysis(code, validation_result)
+        except Exception as e:
+            logger.error(f"Security analysis failed: {e}")
+            security_analysis = {"security_score": 0.5, "critical_issues": [], "warnings": [], "recommendations": [], "exploit_risk": "medium"}
+        
+        try:
+            quality_analysis = await conduct_quality_analysis(code, task_context)
+        except Exception as e:
+            logger.error(f"Quality analysis failed: {e}")
+            quality_analysis = {"quality_score": 0.5, "improvements": [], "technical_debt": "medium"}
+        
+        try:
+            logic_analysis = await conduct_logic_analysis(code, task_context)
+        except Exception as e:
+            logger.error(f"Logic analysis failed: {e}")
+            logic_analysis = {"logic_score": 0.5, "logic_errors": [], "missing_functionality": []}
         
         # Synthesize final decision
         decision_result = synthesize_aitl_decision(security_analysis, quality_analysis, logic_analysis)
@@ -1955,23 +1981,64 @@ async def auto_process_pending_with_aitl(
 
 @app.post("/internal/aitl-review")
 async def internal_aitl_review(request_data: Dict[str, Any]):
-    """Internal endpoint for direct AITL review - called by workflow"""
+    """Internal endpoint for direct AITL review using comprehensive refinement system"""
     try:
-        # Call the AITL intelligent review function directly
-        aitl_result = await aitl_intelligent_review(request_data)
-        return aitl_result
+        # Debug: Print the AITL_ENABLED value
+        logger.info(f"AITL_ENABLED value: {AITL_ENABLED}")
+        
+        # Check if AITL is enabled
+        if not AITL_ENABLED:
+            logger.info("AITL disabled - auto-approving task")
+            return {
+                "decision": "approve",
+                "confidence": 1.0,
+                "reasoning": "Auto-approved (AITL system disabled)",
+                "suggested_improvements": [],
+                "metadata": {"aitl_enabled": False, "auto_approved": True}
+            }
+        
+        # Extract data from request
+        code = request_data.get("code", "")
+        context = request_data.get("context", {})
+        task = context.get("task", {})
+        validation_result = context.get("validation_result", {})
+        
+        # Create refinement context for the new AITL system
+        from src.orchestrator.aitl_system import RefinementContext, get_aitl_orchestrator
+        
+        refinement_context = RefinementContext(
+            original_code=code,
+            original_request=task.get("description", ""),
+            execution_results=context.get("execution_results", {}),
+            validation_failures=validation_result.get("checks", []),
+            complexity_score=task.get("complexity", 0.5),
+            risk_factors=task.get("risk_factors", [])
+        )
+        
+        # Get AITL orchestrator and process refinement
+        logger.info(f"Processing AITL refinement for task: {task.get('task_id', 'unknown')}")
+        orchestrator = await get_aitl_orchestrator()
+        aitl_decision = await orchestrator.process_refinement(refinement_context)
+        
+        # Convert AITLDecision to the expected response format
+        response = {
+            "decision": aitl_decision.decision,
+            "confidence": aitl_decision.confidence,
+            "reasoning": aitl_decision.reasoning,
+            "suggested_improvements": aitl_decision.suggested_improvements,
+            "metadata": aitl_decision.metadata
+        }
+        
+        logger.info(f"AITL refinement complete: {aitl_decision.decision} (confidence: {aitl_decision.confidence:.3f})")
+        return response
         
     except Exception as e:
-        logger.error(f"Internal AITL review failed: {e}")
+        logger.error(f"Internal AITL review failed: {e}", exc_info=True)
         return {
-            "decision": "rejected",
+            "decision": "escalate_to_human",
             "confidence": 0.0,
             "reasoning": f"AITL system error: {str(e)}",
-            "feedback": "AITL system encountered an error - rejected for safety",
-            "security_issues": ["AITL system error"],
-            "modifications_required": ["Manual review required"],
-            "estimated_fix_time": 60,
-            "quality_score": 0.0,
+            "suggested_improvements": [],
             "metadata": {"error": str(e)}
         }
 
