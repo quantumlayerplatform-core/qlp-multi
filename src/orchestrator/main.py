@@ -85,9 +85,9 @@ validation_client = ValidationMeshClient(settings.VALIDATION_MESH_URL)
 # In-memory storage for HITL requests (in production, use a database)
 hitl_requests: Dict[str, Dict[str, Any]] = {}
 
-# AITL Configuration
-AITL_ENABLED = True
-AITL_AUTO_PROCESS = True
+# AITL Configuration - Temporarily disabled for unified optimization testing
+AITL_ENABLED = False
+AITL_AUTO_PROCESS = False
 AITL_CONFIDENCE_THRESHOLD = 0.75
 
 
