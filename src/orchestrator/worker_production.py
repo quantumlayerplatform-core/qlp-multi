@@ -119,7 +119,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
     
     activity.logger.info(f"Decomposing request: {request['request_id']}")
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for unified optimization
         # First, check vector memory for similar past requests
         memory_response = await client.post(
             f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/search/requests",
@@ -136,9 +136,9 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
             similar_requests = response_data if isinstance(response_data, list) else response_data.get("results", [])
             activity.logger.info(f"Found {len(similar_requests)} similar past requests")
         
-        # Decompose with context from similar requests
+        # Decompose with unified optimization and context from similar requests
         response = await client.post(
-            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/test/decompose",
+            f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/decompose/unified-optimization",
             json={
                 "description": request["description"],
                 "tenant_id": request["tenant_id"],

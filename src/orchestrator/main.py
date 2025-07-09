@@ -809,11 +809,11 @@ class QLPExecutionWorkflow:
             start_to_close_timeout=datetime.timedelta(minutes=1)
         )
         
-        # Step 2: Decompose request (enhanced with learning)
+        # Step 2: Decompose request (enhanced with unified optimization)
         decomposition = await workflow.execute_activity(
             decompose_request_activity,
             {"request": request, "similar_executions": similar_executions},
-            start_to_close_timeout=datetime.timedelta(minutes=5)
+            start_to_close_timeout=datetime.timedelta(minutes=10)  # Increased for unified optimization
         )
         
         # Step 3: Create execution plan
@@ -910,7 +910,7 @@ async def search_similar_executions_activity(request: ExecutionRequest) -> List[
 
 @activity.defn
 async def decompose_request_activity(params: Dict[str, Any]) -> DecompositionResult:
-    """Enhanced decomposition with learning from similar executions"""
+    """Enhanced decomposition with unified optimization and learning from similar executions"""
     orchestrator = MetaOrchestrator()
     
     if isinstance(params, dict):
@@ -920,11 +920,13 @@ async def decompose_request_activity(params: Dict[str, Any]) -> DecompositionRes
         # Enhance the orchestrator with learning data if available
         if similar_executions:
             orchestrator._apply_learning_insights(similar_executions)
-            
-        return await orchestrator.decompose_request(request)
+        
+        # Use unified optimization for enhanced decomposition
+        logger.info("Using unified optimization for end-to-end execution", request_id=request.id)
+        return await orchestrator.decompose_request_with_unified_optimization(request)
     else:
         # Fallback for backward compatibility
-        return await orchestrator.decompose_request(params)
+        return await orchestrator.decompose_request_with_unified_optimization(params)
 
 
 @activity.defn
