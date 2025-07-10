@@ -12,7 +12,8 @@ import structlog
 from datetime import datetime
 
 from src.agents.meta_prompts.meta_engineer import MetaPromptEngineer, PromptEvolutionStrategy
-from src.nlp.pattern_selection_engine import PatternSelectionEngine, PatternType, RequestCharacteristics
+from src.nlp.pattern_selection_engine_fixed import FixedPatternSelectionEngine as PatternSelectionEngine
+from src.nlp.pattern_selection_engine import PatternType, RequestCharacteristics
 from src.common.models import ExecutionRequest, Task, TaskResult
 from src.common.config import settings
 

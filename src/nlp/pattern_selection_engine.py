@@ -62,15 +62,24 @@ class PatternSelectionEngine:
     
     def __init__(self):
         # Initialize OpenAI client
-        if hasattr(settings, 'AZURE_OPENAI_ENDPOINT') and settings.AZURE_OPENAI_ENDPOINT:
+        self.is_azure = hasattr(settings, 'AZURE_OPENAI_ENDPOINT') and settings.AZURE_OPENAI_ENDPOINT
+        if self.is_azure:
             from openai import AsyncAzureOpenAI
+            logger.info(f"Initializing Azure OpenAI client")
+            logger.info(f"Endpoint: {settings.AZURE_OPENAI_ENDPOINT}")
+            logger.info(f"API Key present: {bool(settings.AZURE_OPENAI_API_KEY)}")
+            logger.info(f"Deployment: {settings.AZURE_OPENAI_DEPLOYMENT_NAME}")
+            
             self.openai_client = AsyncAzureOpenAI(
                 api_key=settings.AZURE_OPENAI_API_KEY,
                 api_version=settings.AZURE_OPENAI_API_VERSION,
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
             )
+            self.model_name = settings.AZURE_OPENAI_DEPLOYMENT_NAME
         else:
+            logger.info(f"Initializing standard OpenAI client")
             self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            self.model_name = "gpt-4"
         
         # Pattern performance tracking
         self.pattern_performance = {}
@@ -190,7 +199,9 @@ class PatternSelectionEngine:
     
     async def analyze_request_characteristics(self, request: str, context: Dict[str, Any]) -> RequestCharacteristics:
         """Analyze request to extract characteristics for pattern selection"""
-        logger.info("Analyzing request characteristics for pattern selection")
+        logger.info("Analyzing request characteristics for pattern selection v2.0")  # Changed message
+        logger.info(f"DEBUG: Method called with request length: {len(request)}")
+        logger.info(f"DEBUG: Is Azure: {self.is_azure}, Model: {self.model_name}")
         
         analysis_prompt = f"""
         Analyze this request to extract characteristics for intelligent pattern selection:
@@ -227,17 +238,72 @@ class PatternSelectionEngine:
         """
         
         try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are an expert at analyzing request characteristics for pattern selection."},
-                    {"role": "user", "content": analysis_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=1000
-            )
+            logger.info(f"Starting pattern analysis with Azure={self.is_azure}, Model={self.model_name}")
             
-            analysis_data = json.loads(response.choices[0].message.content)
+            # Azure OpenAI doesn't support response_format parameter in older versions
+            messages = [
+                {"role": "system", "content": "You are an expert at analyzing request characteristics for pattern selection. You must return ONLY valid JSON with no additional text or explanation."},
+                {"role": "user", "content": analysis_prompt}
+            ]
+            
+            logger.info(f"Sending request to LLM...")
+            
+            # Make the API call without response_format for both Azure and OpenAI
+            try:
+                response = await self.openai_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=1000,
+                    timeout=30.0  # Add explicit timeout
+                )
+            except Exception as api_error:
+                logger.error(f"API call failed: {api_error}")
+                logger.error(f"API error type: {type(api_error).__name__}")
+                raise
+            
+            logger.info(f"Received response from LLM")
+            
+            response_content = response.choices[0].message.content
+            print(f"PATTERN DEBUG: Got response: {response_content[:100] if response_content else 'None'}")  # Direct print
+            logger.info(f"Raw response length: {len(response_content) if response_content else 0}")
+            
+            if not response_content:
+                logger.error("Empty response from LLM")
+                return self._fallback_characteristics()
+            
+            logger.info(f"First 100 chars of response: {response_content[:100]}")
+            
+            # Clean the response - Azure sometimes adds extra text
+            response_content = response_content.strip()
+            
+            # Extract JSON if wrapped in code blocks
+            if response_content.startswith("```json"):
+                response_content = response_content[7:]  # Remove ```json
+            if response_content.startswith("```"):
+                response_content = response_content[3:]  # Remove ```
+            if response_content.endswith("```"):
+                response_content = response_content[:-3]  # Remove trailing ```
+            
+            # Try to extract JSON from response
+            import re
+            
+            # Remove any markdown code blocks first
+            cleaned = response_content
+            if '```' in cleaned:
+                # Extract content between backticks
+                parts = cleaned.split('```')
+                if len(parts) >= 3:
+                    cleaned = parts[1]
+                    if cleaned.startswith('json'):
+                        cleaned = cleaned[4:]
+            
+            # Try to find JSON object
+            json_match = re.search(r'\{[^}]*"complexity_level"[^}]*\}', cleaned, re.DOTALL)
+            if json_match:
+                response_content = json_match.group(0)
+                
+            analysis_data = json.loads(response_content)
             
             characteristics = RequestCharacteristics(
                 complexity_level=analysis_data.get("complexity_level", "medium"),
@@ -254,8 +320,23 @@ class PatternSelectionEngine:
             
             return characteristics
             
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            if 'response_content' in locals():
+                logger.error(f"Response content: {response_content[:200]}")
+                # Sometimes Azure returns empty response
+                if not response_content or response_content.strip() == '':
+                    logger.error("Received empty response from Azure OpenAI")
+            return self._fallback_characteristics()
         except Exception as e:
             logger.error(f"Failed to analyze request characteristics: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {str(e)}")
+            if hasattr(e, 'response'):
+                logger.error(f"API Response: {e.response}")
+            if hasattr(e, '__traceback__'):
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
             return self._fallback_characteristics()
     
     async def recommend_patterns(self, characteristics: RequestCharacteristics, 

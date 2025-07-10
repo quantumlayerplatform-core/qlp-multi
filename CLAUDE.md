@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Quantum Layer Platform (QLP) is an AI-powered enterprise software development system that transforms natural language requirements into production-ready code through intelligent agent orchestration. The platform uses a microservices architecture with 5 core services communicating via REST APIs and Temporal workflows.
 
+**Core Concept**: Request → Orchestrator → Task Decomposition → Agent Execution → Validation → Capsule Creation
+
 **Current Status**: Core platform operational, UI development pending
 
 ## Technology Stack
@@ -49,6 +51,11 @@ python test_azure_integration.py   # Azure integration test
 python test_full_e2e.py            # Full end-to-end test
 python test_k8s_platform.py        # Kubernetes platform test
 
+# Enhanced testing commands
+python test_aitl.py                # AITL (AI-in-the-loop) testing
+python test_enhanced_sandbox.py    # Enhanced sandbox features
+python test_agent_powered_validation.py  # Agent validation testing
+
 # Run tests with coverage (if pytest is available)
 pytest --cov=src tests/
 ```
@@ -64,8 +71,13 @@ curl http://localhost:8004/health  # Execution Sandbox
 
 # Service-specific operations
 ./stop_all.sh          # Graceful shutdown
-./cleanup_all.sh       # Complete cleanup
+./cleanup_all.sh       # Complete cleanup (kills processes, frees ports)
 ./start_temporal_worker.sh  # Start Temporal worker
+
+# Temporal workflow management
+python scripts/cleanup_stuck_workflows.py --max-age 1  # Clean stuck workflows
+python scripts/terminate_workflow.py <workflow_id>     # Terminate specific workflow
+temporal workflow list                                 # List all workflows
 ```
 
 ### Build and Deployment
@@ -109,6 +121,7 @@ The platform consists of 5 microservices:
    - Decomposes requests into atomic tasks
    - Manages Temporal workflows
    - Coordinates service interactions
+   - **Intelligent Pattern Selection Engine**: Automatically selects from 8 reasoning patterns (Abstraction, Emergent, Meta-Learning, etc.) for 60-70% computational reduction
 
 2. **Agent Factory** (`src/agents/`) - Port 8001
    - Multi-tier agent system (T0-T3)
@@ -118,7 +131,7 @@ The platform consists of 5 microservices:
 3. **Validation Mesh** (`src/validation/`) - Port 8002
    - 5-stage validation pipeline
    - Ensemble consensus mechanism
-   - Human escalation for low confidence
+   - AITL (AI-in-the-loop) review when confidence < 0.7
 
 4. **Vector Memory** (`src/memory/`) - Port 8003
    - Semantic search with Qdrant
@@ -130,7 +143,7 @@ The platform consists of 5 microservices:
    - Multi-language support
    - Resource isolation
 
-All services communicate via REST APIs with OpenAPI documentation available at `/docs` endpoint.
+All services communicate via REST APIs with OpenAPI documentation available at `/docs` endpoint. Service discovery uses container names (e.g., `http://orchestrator:8000`) in Docker environments.
 
 ## Key Implementation Patterns
 
@@ -202,11 +215,16 @@ The platform includes an advanced prompt engineering system (`src/agents/meta_pr
 - Automatic learning from each execution
 - Principle library with wisdom from Deutsch, Popper, Dijkstra, Kay, Liskov
 
-### Multi-Tier Agent System
-- **T0 (Simple)**: Basic tasks using Llama/GPT-3.5
-- **T1 (Context-aware)**: Enhanced GPT-3.5 with project understanding
-- **T2 (Reasoning)**: Claude for complex problem solving
-- **T3 (Meta-agents)**: Orchestrate other agents for large tasks
+### Intelligent Architecture
+- **Intelligent Capsule Generator** (`src/orchestrator/intelligent_capsule_generator.py`): Universal intelligence without templates
+- **Enhanced Meta-Prompt Engineer** (`src/agents/meta_prompts/enhanced_meta_engineer.py`): Meta-cognitive reasoning
+- **Unified Intelligent Orchestrator** (`src/orchestrator/unified_intelligent_orchestrator.py`): Combines all intelligence systems
+- **Shared Context System** (`src/orchestrator/shared_context.py`): Maintains consistency across all workflow activities
+
+### Temporal Workflow Integration
+- Production workflow in `src/orchestrator/worker_production.py`
+- Activities: Decompose → Select agent → Execute → Validate → Sandbox test → AITL review → Create capsule
+- Language enforcement ensures consistent output throughout pipeline
 
 ## API Documentation
 
@@ -293,3 +311,45 @@ Key directories to know:
 - `requirements.txt` - Python dependencies
 - `Dockerfile` - Multi-service container build
 - `.env` - Environment variables (create from README instructions)
+
+## Common Troubleshooting
+
+### Port Conflicts
+If services fail to start due to port conflicts:
+```bash
+# Check what's using a port
+lsof -i :8000
+
+# Kill process on specific port
+lsof -ti:8000 | xargs kill -9
+
+# Or use the cleanup script
+./cleanup_all.sh
+```
+
+### Temporal Workflow Issues
+```bash
+# Check for stuck workflows
+python scripts/cleanup_stuck_workflows.py --max-age 2
+
+# View workflow details
+temporal workflow describe -w <workflow-id>
+
+# Force terminate workflow
+python scripts/terminate_workflow.py <workflow-id>
+```
+
+### Complete Reset Workflow
+```bash
+# 1. Stop everything
+./stop_all.sh
+
+# 2. Clean up completely
+./cleanup_all.sh
+
+# 3. Activate virtual environment
+source venv/bin/activate
+
+# 4. Start fresh
+./start_all.sh
+```
