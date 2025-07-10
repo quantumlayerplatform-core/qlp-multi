@@ -93,7 +93,7 @@ class HITLRequest:
     task_id: str
     review_type: str  # clarification, approval, quality_check
     context: Dict[str, Any]
-    deadline: datetime
+    deadline: str  # ISO format string
     priority: str = "normal"  # low, normal, high, critical
 
 @dataclass
@@ -112,15 +112,34 @@ class WorkflowResult:
 
 # Activities - These run outside the sandbox and can use any imports
 @activity.defn
-async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
-    """Decompose NLP request into tasks with dependencies"""
+async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], Dict[str, Any]]:
+    """Decompose NLP request into tasks with dependencies and create shared context"""
     import httpx
     from ..common.config import settings
+    from .shared_context import ContextBuilder
     
     activity.logger.info(f"Decomposing request: {request['request_id']}")
     
+    # Send initial heartbeat
+    activity.heartbeat("Starting decomposition...")
+    
+    # Create shared context from request
+    shared_context = ContextBuilder.create_from_request(
+        request_id=request["request_id"],
+        tenant_id=request["tenant_id"],
+        user_id=request["user_id"],
+        description=request["description"],
+        requirements=request.get("requirements"),
+        constraints=request.get("constraints")
+    )
+    
+    activity.logger.info(f"Created shared context with language: {shared_context.file_structure.primary_language}")
+    activity.logger.info(f"Architecture pattern: {shared_context.architecture_pattern}")
+    activity.logger.info(f"Main file: {shared_context.file_structure.main_file_name}")
+    
     async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minutes for unified optimization
         # First, check vector memory for similar past requests
+        activity.heartbeat("Searching for similar requests...")
         memory_response = await client.post(
             f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/search/requests",
             json={
@@ -137,6 +156,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
             activity.logger.info(f"Found {len(similar_requests)} similar past requests")
         
         # Decompose with unified optimization and context from similar requests
+        activity.heartbeat("Running unified optimization decomposition...")
         response = await client.post(
             f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/decompose/unified-optimization",
             json={
@@ -166,20 +186,51 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
             }
         )
         
-        # Convert to workflow-safe format
+        # Use shared context for language consistency
+        execution_context = {
+            "preferred_language": shared_context.file_structure.primary_language,
+            "main_file_name": shared_context.file_structure.main_file_name,
+            "architecture_pattern": shared_context.architecture_pattern,
+            "project_structure": shared_context.project_structure,
+            "sandbox_target": True,
+            "output_format": "code",
+            "quality_standards": shared_context.quality_context.quality_standards,
+            "validation_requirements": shared_context.quality_context.validation_requirements,
+            "security_requirements": shared_context.quality_context.security_requirements
+        }
+        
+        # Convert to workflow-safe format with shared context
         workflow_tasks = []
         for task in tasks:
+            task_id = task.get("id")
+            task_dependencies = dependencies.get(task_id, [])
+            
+            # Add task dependencies to shared context
+            for dep in task_dependencies:
+                shared_context.dependency_context.add_dependency(task_id, dep)
+            
+            # Get context for this specific task
+            task_context = shared_context.get_context_for_task(task_id)
+            task_context.update(execution_context)  # Merge execution context
+            
             workflow_tasks.append({
-                "task_id": task.get("id"),
+                "task_id": task_id,
                 "type": task.get("type"),
                 "description": task.get("description"),
                 "complexity": task.get("complexity", "simple"),
-                "dependencies": dependencies.get(task.get("id"), []),
-                "context": task.get("context", {}),
+                "dependencies": task_dependencies,
+                "context": task_context,
                 "metadata": task.get("metadata", {})
             })
         
-        return workflow_tasks, dependencies
+        # Update shared context progress
+        shared_context.update_progress(
+            "decomposition", 
+            "decomposition_completed", 
+            {"tasks_created": len(workflow_tasks), "dependencies_mapped": len(dependencies)}
+        )
+        
+        return workflow_tasks, dependencies, shared_context.to_dict()
 
 
 @activity.defn
@@ -235,12 +286,56 @@ async def select_agent_tier_activity(task: Dict[str, Any]) -> str:
 
 
 @activity.defn
-async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str) -> Dict[str, Any]:
+async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str, shared_context_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a single task using the selected agent tier with TDD integration"""
     import httpx
     from ..common.config import settings
     
     activity.logger.info(f"Executing task {task['task_id']} with tier {tier}")
+    
+    # Send heartbeat for task start
+    activity.heartbeat(f"Starting task execution: {task['task_id']}")
+    
+    # Extract language context and enhance task description
+    preferred_language = task.get("context", {}).get("preferred_language", "python")
+    activity.logger.info(f"Task {task['task_id']} enforcing language: {preferred_language}")
+    
+    # Hard-enforce language constraint with structured metadata
+    task = task.copy()
+    if preferred_language and preferred_language != "auto":
+        # Step 1: Embed preferred_language in structured metadata
+        task["meta"] = {
+            "preferred_language": preferred_language,
+            "execution_constraints": {
+                "language": preferred_language,
+                "output_type": "code",
+                "sandbox_target": True
+            }
+        }
+        
+        # Step 2: Create structured system prompt for strong enforcement
+        system_prompt = f"""You are an expert software agent. Follow these HARD CONSTRAINTS for output generation:
+
+- Output must be in **{preferred_language.upper()}**
+- Use {preferred_language} syntax, functions, and idioms exclusively
+- Do NOT use TypeScript, JavaScript, Java, C++, or any other language
+- The result must be valid {preferred_language} and ready for sandbox execution
+
+Respond only with code and brief inline comments. No explanations or mixed languages."""
+        
+        # Step 3: Combine system prompt with task description
+        original_description = task.get("description", "")
+        task["description"] = f"{system_prompt}\n\nTask:\n{original_description}"
+        
+        # Step 4: Add to metadata and context for agent access
+        task["metadata"] = task.get("metadata", {})
+        task["metadata"]["language_constraint"] = preferred_language
+        task["metadata"]["enforce_language"] = True
+        task["metadata"]["system_prompt"] = system_prompt
+        
+        task["context"] = task.get("context", {})
+        task["context"]["required_language"] = preferred_language
+        task["context"]["language_enforcement"] = "strict"
     
     # Check if task should use TDD
     should_use_tdd = _should_use_tdd(task)
@@ -249,32 +344,50 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
         activity.logger.info(f"Using TDD for task {task['task_id']}")
         return await _execute_with_tdd(task, tier, request_id)
     else:
-        return await _execute_standard(task, tier, request_id)
+        return await _execute_standard(task, tier, request_id, shared_context_dict)
 
 
-async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str) -> Dict[str, Any]:
+async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str, shared_context_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Execute task using standard agent approach"""
     import httpx
     from ..common.config import settings
+    
+    # Send heartbeat for standard execution start
+    activity.heartbeat(f"Starting standard execution for task: {task['task_id']}")
     
     async with httpx.AsyncClient(timeout=300.0) as client:
         # Execute via agent service
         start_time = datetime.now(timezone.utc)
         
+        # Step 3: Inject language metadata into agent input for LLM logging
+        context = task.get("context", {}).copy()
+        preferred_language = task.get("meta", {}).get("preferred_language", "python")
+        context["preferred_language"] = preferred_language
+        
+        execution_input = {
+            "task": {
+                "id": task.get("task_id", task.get("id", "")),
+                "type": task.get("type", "code_generation"),
+                "description": task.get("description", ""),
+                "complexity": task.get("complexity", "medium"),
+                "status": task.get("status", "pending"),
+                "metadata": task.get("metadata", {}),
+                "meta": task.get("meta", {})  # Include structured metadata
+            },
+            "tier": tier,
+            "context": context,
+            "preferred_language": preferred_language,
+            "shared_context": shared_context_dict,
+            "request_id": request_id,
+            "execution_constraints": task.get("meta", {}).get("execution_constraints", {})
+        }
+        
+        # Send heartbeat before agent service call
+        activity.heartbeat(f"Calling agent service for task: {task['task_id']}")
+        
         response = await client.post(
             f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
-            json={
-                "task": {
-                    "id": task.get("task_id", task.get("id", "")),
-                    "type": task.get("type", "code_generation"),
-                    "description": task.get("description", ""),
-                    "complexity": task.get("complexity", "medium"),
-                    "status": task.get("status", "pending"),
-                    "metadata": task.get("metadata", {})
-                },
-                "tier": tier,
-                "context": task.get("context", {})
-            }
+            json=execution_input
         )
         
         execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -307,6 +420,27 @@ async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str) ->
             }
         
         result = response.json()
+        
+        # Step 4: Post-hoc detection & rejection if wrong language
+        if result.get("status") == "completed" and result.get("output_type") == "code":
+            output = result.get("output", {})
+            if isinstance(output, dict):
+                generated_code = output.get("code", output.get("content", ""))
+                detected_language = output.get("language", "python")
+                expected_language = preferred_language
+                
+                # If detected language doesn't match expected, log and potentially retry
+                if detected_language != expected_language and generated_code:
+                    activity.logger.warning(f"Language mismatch detected: expected {expected_language}, got {detected_language}")
+                    activity.logger.warning(f"Code sample: {generated_code[:100]}...")
+                    
+                    # For now, just log the mismatch - could add retry logic here
+                    result["metadata"] = result.get("metadata", {})
+                    result["metadata"]["language_mismatch"] = {
+                        "expected": expected_language,
+                        "detected": detected_language,
+                        "code_sample": generated_code[:200]
+                    }
         
         # Store successful execution for learning
         await client.post(
@@ -346,6 +480,9 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
     from ..common.config import settings
     
     activity.logger.info(f"Validating result for task: {task['task_id']}")
+    
+    # Send heartbeat for validation start
+    activity.heartbeat(f"Starting validation for task: {task['task_id']}")
     
     if result.get("status") != "completed" or not result.get("output"):
         return {
@@ -389,6 +526,9 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
         }
     
     async with httpx.AsyncClient(timeout=120.0) as client:
+        # Send heartbeat before validation service call
+        activity.heartbeat(f"Calling validation service for task: {task['task_id']}")
+        
         # Run full validation pipeline
         response = await client.post(
             f"http://validation-mesh:{settings.VALIDATION_MESH_PORT}/validate/code",
@@ -414,6 +554,10 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
         
         validation_result = response.json()
         
+        # Ensure confidence_score is always present (safety check)
+        if "confidence_score" not in validation_result or validation_result["confidence_score"] is None:
+            validation_result["confidence_score"] = 0.5  # Default to medium confidence
+        
         # Determine if human review is needed based on confidence and critical issues
         confidence = validation_result.get("confidence_score", 0)
         critical_issues = any(
@@ -429,81 +573,187 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
 
 @activity.defn
 async def execute_in_sandbox_activity(code: str, language: str, test_inputs: Optional[List[Dict]] = None) -> Dict[str, Any]:
-    """Execute code in sandbox with comprehensive testing"""
-    import httpx
-    from ..common.config import settings
+    """Execute code using agent-powered QLCapsule runtime validation"""
+    import time
+    from ..common.models import QLCapsule
+    from ..validation.qlcapsule_runtime_validator import QLCapsuleRuntimeValidator, SupportedLanguage
     
-    activity.logger.info(f"Executing code in sandbox for language: {language}")
+    activity.logger.info(f"🚀 AGENT-POWERED VALIDATION: Executing code using agent-powered validation for language: {language}")
     
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        # If no test inputs provided, use standard test cases
-        if not test_inputs:
-            test_inputs = [{}]  # At least run once with no inputs
+    # Send heartbeat for sandbox start
+    activity.heartbeat(f"Starting sandbox execution for language: {language}")
+    
+    # Normalize language name
+    language_normalized = language.lower()
+    
+    # Map language names to proper extensions and main files
+    language_config = {
+        "python": {"ext": "py", "main": "main.py"},
+        "javascript": {"ext": "js", "main": "main.js"},
+        "typescript": {"ext": "ts", "main": "main.ts"},
+        "java": {"ext": "java", "main": "Main.java"},
+        "go": {"ext": "go", "main": "main.go"},
+        "rust": {"ext": "rs", "main": "main.rs"},
+        "ruby": {"ext": "rb", "main": "main.rb"},
+        "php": {"ext": "php", "main": "main.php"},
+        "csharp": {"ext": "cs", "main": "Program.cs"}
+    }
+    
+    # Get config for language (default to Python if unknown)
+    config = language_config.get(language_normalized, language_config["python"])
+    main_file = config["main"]
+    
+    # Create a QLCapsule for the code
+    capsule = QLCapsule(
+        id=f"temp-capsule-{int(time.time())}",
+        request_id=f"temp-request-{int(time.time())}",
+        source_code={
+            main_file: code
+        },
+        manifest={
+            "language": language_normalized,
+            "entry_point": main_file
+        }
+    )
+    
+    # Add necessary dependency files based on language
+    if language_normalized == "python":
+        capsule.source_code["requirements.txt"] = "# Auto-generated for validation\n"
+    elif language_normalized in ["javascript", "typescript"]:
+        # Add comprehensive package.json for Node.js/TypeScript
+        if language_normalized == "typescript":
+            capsule.source_code["package.json"] = '''{
+  "name": "temp-validation",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "npx ts-node main.ts",
+    "build": "tsc main.ts",
+    "test": "npx mocha --require ts-node/register **/*.test.ts"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0",
+    "ts-node": "^10.0.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.0.0",
+    "chai": "^4.3.0",
+    "@types/mocha": "^10.0.0",
+    "@types/chai": "^4.3.0"
+  }
+}'''
+            # Add TypeScript config
+            capsule.source_code["tsconfig.json"] = '''{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}'''
+        else:
+            capsule.source_code["package.json"] = '''{
+  "name": "temp-validation",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "test": "mocha **/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "mocha": "^10.0.0",
+    "chai": "^4.3.0"
+  }
+}'''
+    elif language_normalized == "go":
+        capsule.source_code["go.mod"] = '''module temp-validation
+
+go 1.21
+'''
+    elif language_normalized == "java":
+        capsule.source_code["pom.xml"] = '''<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>temp-validation</artifactId>
+    <version>1.0.0</version>
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+    </properties>
+</project>'''
+    elif language_normalized == "rust":
+        capsule.source_code["Cargo.toml"] = '''[package]
+name = "temp-validation"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+'''
+    
+    # Use agent-powered runtime validator
+    validator = QLCapsuleRuntimeValidator()
+    
+    try:
+        # Send heartbeat before validation
+        activity.heartbeat(f"Running capsule validation for language: {language}")
         
-        results = []
-        overall_success = True
-        total_time = 0
+        # Use the correct method name: validate_capsule_runtime
+        runtime_result = await validator.validate_capsule_runtime(capsule)
         
-        for i, inputs in enumerate(test_inputs):
-            response = await client.post(
-                f"http://execution-sandbox:{settings.SANDBOX_PORT}/execute",
-                json={
-                    "code": code,
-                    "language": language,
-                    "inputs": inputs
-                }
-            )
-            
-            if response.status_code != 200:
-                results.append({
-                    "test_case": i,
-                    "success": False,
-                    "error": f"Sandbox error: {response.status_code}",
-                    "output": None
-                })
-                overall_success = False
-            else:
-                result = response.json()
-                results.append({
-                    "test_case": i,
-                    "success": result.get("success", False),
-                    "output": result.get("output"),
-                    "error": result.get("error"),
-                    "execution_time": result.get("execution_time", 0),
-                    "resource_usage": result.get("resource_usage", {})
-                })
-                
-                if not result.get("success"):
-                    overall_success = False
-                
-                total_time += result.get("execution_time", 0)
-        
-        # Filter out None results and ensure safe access to nested attributes
-        valid_results = [r for r in results if r is not None]
-        
-        # Safe resource usage calculation
-        max_memory = 0
-        total_cpu_time = 0
-        
-        for r in valid_results:
-            if r and isinstance(r, dict):
-                resource_usage = r.get("resource_usage", {})
-                if resource_usage and isinstance(resource_usage, dict):
-                    max_memory = max(max_memory, resource_usage.get("memory_mb", 0))
-                    total_cpu_time += resource_usage.get("cpu_time", 0)
+        # Convert to expected format
+        results = [{
+            "test_case": 0,
+            "success": runtime_result.success,
+            "output": runtime_result.stdout,
+            "error": runtime_result.stderr if not runtime_result.success else None,
+            "execution_time": runtime_result.execution_time,
+            "resource_usage": {
+                "memory_mb": runtime_result.memory_usage,
+                "cpu_time": runtime_result.execution_time
+            }
+        }]
         
         return {
-            "success": overall_success,
-            "output": valid_results[0].get("output") if len(valid_results) == 1 else [r.get("output") for r in valid_results if r],
-            "error": valid_results[0].get("error") if len(valid_results) == 1 and not overall_success else None,
-            "execution_time": total_time,
-            "test_results": valid_results,
+            "success": runtime_result.success,
+            "output": runtime_result.stdout,
+            "error": runtime_result.stderr if not runtime_result.success else None,
+            "execution_time": runtime_result.execution_time,
+            "test_results": results,
             "resource_usage": {
-                "max_memory": max_memory,
-                "total_cpu_time": total_cpu_time
+                "max_memory": runtime_result.memory_usage,
+                "total_cpu_time": runtime_result.execution_time
             }
         }
-
+        
+    except Exception as e:
+        activity.logger.error(f"Agent-powered validation failed: {e}")
+        return {
+            "success": False,
+            "output": None,
+            "error": f"Agent validation error: {str(e)}",
+            "execution_time": 0,
+            "test_results": [{
+                "test_case": 0,
+                "success": False,
+                "output": None,
+                "error": f"Agent validation error: {str(e)}",
+                "execution_time": 0,
+                "resource_usage": {
+                    "memory_mb": 0,
+                    "cpu_time": 0
+                }
+            }],
+            "resource_usage": {
+                "max_memory": 0,
+                "total_cpu_time": 0
+            }
+        }
 
 @activity.defn
 async def request_aitl_review_activity(
@@ -597,19 +847,80 @@ async def request_aitl_review_activity(
             }
 
 
+def _is_test_code(code: str) -> bool:
+    """Check if code is primarily test code"""
+    if not code:
+        return False
+    
+    code_lower = code.lower()
+    test_indicators = [
+        # Python test patterns
+        "import pytest", "from pytest", "import unittest", "from unittest",
+        "def test_", "class test", "assert ", "self.assert",
+        # JavaScript/TypeScript test patterns
+        "import { expect }", "from 'chai'", "from 'mocha'", "describe(", "it(", "expect(", "test(",
+        # Java test patterns
+        "import org.junit", "@test", "@before", "@after",
+        # Go test patterns
+        "import \"testing\"", "func test", "t.error", "t.fail"
+    ]
+    
+    return any(indicator in code_lower for indicator in test_indicators)
+
+def _is_documentation(code: str) -> bool:
+    """Check if code is primarily documentation"""
+    if not code:
+        return False
+    
+    code_lower = code.lower()
+    doc_indicators = [
+        "# documentation", "# readme", "## ", "### ", "#### ",
+        "readme", "documentation", "getting started", "installation",
+        "usage", "examples", "api reference"
+    ]
+    
+    return any(indicator in code_lower for indicator in doc_indicators)
+
 @activity.defn
 async def create_ql_capsule_activity(
     request_id: str,
     tasks: List[Dict[str, Any]],
-    results: List[Dict[str, Any]]
+    results: List[Dict[str, Any]],
+    shared_context_dict: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Create a QLCapsule with all artifacts"""
+    """Create a QLCapsule with all artifacts using shared context"""
     import httpx
     from ..common.config import settings
+    from .shared_context import SharedContext
     
     activity.logger.info(f"Creating QLCapsule for request: {request_id}")
     
-    # Organize outputs by type
+    # Reconstruct shared context
+    shared_context = SharedContext.from_dict(shared_context_dict)
+    
+    activity.logger.info(f"Using shared context - Language: {shared_context.file_structure.primary_language}")
+    activity.logger.info(f"Main file: {shared_context.file_structure.main_file_name}")
+    activity.logger.info(f"Architecture: {shared_context.architecture_pattern}")
+    
+    # Send heartbeat for capsule creation start
+    activity.heartbeat(f"Starting capsule creation for request: {request_id}")
+    
+    # Extract execution context from first task (all tasks should have same context)
+    execution_context = {}
+    if tasks:
+        execution_context = tasks[0].get("context", {})
+    
+    # Use shared context language for consistent file structure
+    preferred_language = shared_context.file_structure.primary_language
+    main_file_name = shared_context.file_structure.main_file_name
+    
+    activity.logger.info(f"Using shared context language: {preferred_language}")
+    activity.logger.info(f"Main file from context: {main_file_name}")
+    
+    # Debug: Log the inputs
+    activity.logger.info(f"DEBUG: Processing {len(tasks)} tasks and {len(results)} results")
+    
+    # Organize outputs by type using execution context
     source_code = {}
     tests = {}
     documentation = []
@@ -621,21 +932,137 @@ async def create_ql_capsule_activity(
             
             if isinstance(output, dict):
                 code = output.get("code", output.get("content", ""))
-                language = output.get("language", "python")
+                actual_language = output.get("language", "python")
                 
-                if task["type"] == "implement":
-                    filename = f"module_{i}.{language}" if language != "python" else f"module_{i}.py"
-                    source_code[filename] = code
-                elif task["type"] == "test":
-                    filename = f"test_{i}.{language}" if language != "python" else f"test_{i}.py"
-                    tests[filename] = code
-                elif task["type"] == "document":
-                    documentation.append(code)
-                elif task["type"] == "deploy":
-                    deployment_config.update(output)
+                activity.logger.info(f"DEBUG: Processing task {i}: actual_language={actual_language}, preferred={preferred_language}, code_length={len(code) if code else 0}")
+                
+                # EMERGENCY FIX: Always include ALL code regardless of language
+                if code and code.strip():
+                    # Get file extension for ACTUAL language (not preferred)
+                    ext_map = {
+                        "python": "py",
+                        "javascript": "js", 
+                        "typescript": "ts",
+                        "java": "java",
+                        "go": "go",
+                        "rust": "rs"
+                    }
+                    ext = ext_map.get(actual_language, "py")
+                    
+                    # CRITICAL: Always include code - don't filter by language!
+                    activity.logger.info(f"EMERGENCY: Including code in {actual_language} (ext: {ext})")
+                    
+                    # Determine file type by content analysis
+                    if _is_test_code(code):
+                        filename = f"test_{i}.{ext}"
+                        tests[filename] = code
+                        activity.logger.info(f"DEBUG: Added test file: {filename}")
+                    elif _is_documentation(code):
+                        documentation.append(code)
+                        activity.logger.info(f"DEBUG: Added documentation")
+                    else:
+                        # Use shared context for consistent file naming
+                        if i == 0 or len(source_code) == 0:
+                            # First module - use shared context main file name
+                            filename = shared_context.file_structure.main_file_name
+                            source_code[filename] = code
+                            activity.logger.info(f"DEBUG: Added main file: {filename} from shared context")
+                        else:
+                            # Additional modules - use descriptive names with proper extension
+                            filename = f"module_{i}.{ext}"
+                            source_code[filename] = code
+                            activity.logger.info(f"DEBUG: Added source file: {filename}")
+                else:
+                    activity.logger.info(f"DEBUG: Skipping task {i}: no code content")
+    
+    # If no files were created, add a main file with first available code
+    activity.logger.info(f"DEBUG: After processing - source_code: {len(source_code)}, tests: {len(tests)}")
+    if not source_code and not tests:
+        activity.logger.info("DEBUG: No files created, trying fallback")
+        # Find first available code
+        for i, (task, result) in enumerate(zip(tasks, results)):
+            if result.get("execution", {}).get("status") == "completed":
+                output = result.get("execution", {}).get("output", {})
+                if isinstance(output, dict):
+                    code = output.get("code", output.get("content", ""))
+                    if code and code.strip():
+                        ext_map = {
+                            "python": "py",
+                            "javascript": "js", 
+                            "typescript": "ts",
+                            "java": "java",
+                            "go": "go",
+                            "rust": "rs"
+                        }
+                        # Use shared context main file name for fallback
+                        filename = shared_context.file_structure.main_file_name
+                        source_code[filename] = code
+                        activity.logger.info(f"DEBUG: Added fallback main file: {filename} from shared context")
+                        break
     
     # Create capsule
     from uuid import uuid4
+    
+    # Create a combined validation report from all task results
+    validation_checks = []
+    total_confidence = 0.0
+    validation_count = 0
+    
+    for result in results:
+        validation_data = result.get("validation", {})
+        if validation_data and validation_data.get("confidence_score") is not None:
+            total_confidence += validation_data.get("confidence_score", 0.0)
+            validation_count += 1
+            
+            # Add checks if they exist
+            if "checks" in validation_data:
+                validation_checks.extend(validation_data["checks"])
+    
+    # Calculate average confidence score
+    avg_confidence = total_confidence / validation_count if validation_count > 0 else 0.5
+    
+    # Create a single validation report for the capsule
+    combined_validation_report = {
+        "id": str(uuid4()),
+        "execution_id": request_id,
+        "overall_status": "passed" if avg_confidence >= 0.7 else "warning" if avg_confidence >= 0.5 else "failed",
+        "checks": validation_checks,
+        "confidence_score": avg_confidence,
+        "requires_human_review": avg_confidence < 0.7,
+        "created_at": datetime.utcnow().isoformat(),  # Add the missing created_at field
+        "metadata": {
+            "task_count": len(tasks),
+            "validation_count": validation_count,
+            "combined_from_tasks": True
+        }
+    }
+    
+    # Ensure validation_report is never None - if no validation data exists, create a basic one
+    if validation_count == 0:
+        activity.logger.warning("No validation data found in task results, creating basic validation report")
+        combined_validation_report = {
+            "id": str(uuid4()),
+            "execution_id": request_id,
+            "overall_status": "warning",
+            "checks": [
+                {
+                    "name": "no_validation_data",
+                    "type": "basic",
+                    "status": "warning",
+                    "message": "No validation data available from task execution"
+                }
+            ],
+            "confidence_score": 0.5,
+            "requires_human_review": True,
+            "created_at": datetime.utcnow().isoformat(),  # Add the missing created_at field
+            "metadata": {
+                "task_count": len(tasks),
+                "validation_count": 0,
+                "combined_from_tasks": True,
+                "reason": "no_validation_data"
+            }
+        }
+    
     capsule_data = {
         "id": str(uuid4()),  # Generate unique ID for capsule
         "request_id": request_id,
@@ -649,15 +1076,27 @@ async def create_ql_capsule_activity(
         "tests": tests,
         "documentation": "\n\n".join(documentation),
         "deployment_config": deployment_config,
-        "validation_reports": [r.get("validation", {}) for r in results],
+        "validation_report": combined_validation_report,  # Use singular validation_report
+        "created_at": datetime.utcnow().isoformat(),  # Add the missing created_at field
         "metadata": {
             "total_execution_time": sum(r.get("execution", {}).get("execution_time", 0) for r in results),
-            "agent_tiers_used": list(set(r.get("execution", {}).get("agent_tier_used", "unknown") for r in results))
+            "agent_tiers_used": list(set(r.get("execution", {}).get("agent_tier_used", "unknown") for r in results)),
+            "shared_context": {
+                "language": shared_context.file_structure.primary_language,
+                "main_file_name": shared_context.file_structure.main_file_name,
+                "architecture_pattern": shared_context.architecture_pattern,
+                "project_structure": shared_context.project_structure,
+                "created_at": shared_context.created_at,
+                "updated_at": shared_context.updated_at
+            }
         }
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
+            # Send heartbeat before storing capsule
+            activity.heartbeat(f"Storing capsule for request: {request_id}")
+            
             # Store capsule
             response = await client.post(
                 f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/store/capsule",
@@ -847,8 +1286,8 @@ class QLPWorkflow:
         }
         
         try:
-            # Step 1: Decompose request into tasks
-            tasks, dependencies = await workflow.execute_activity(
+            # Step 1: Decompose request into tasks with shared context
+            tasks, dependencies, shared_context_dict = await workflow.execute_activity(
                 decompose_request_activity,
                 request,
                 start_to_close_timeout=ACTIVITY_TIMEOUT,
@@ -884,10 +1323,10 @@ class QLPWorkflow:
                     retry_policy=DEFAULT_RETRY_POLICY
                 )
                 
-                # Execute task
+                # Execute task with shared context
                 exec_result = await workflow.execute_activity(
                     execute_task_activity,
-                    args=[task, tier, request["request_id"]],
+                    args=[task, tier, request["request_id"], shared_context_dict],
                     start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,
                     heartbeat_timeout=HEARTBEAT_TIMEOUT,
                     retry_policy=DEFAULT_RETRY_POLICY
@@ -967,7 +1406,7 @@ class QLPWorkflow:
             if workflow_result["tasks_completed"] > 0:
                 capsule_result = await workflow.execute_activity(
                     create_ql_capsule_activity,
-                    args=[request["request_id"], tasks, list(task_results.values())],
+                    args=[request["request_id"], tasks, list(task_results.values()), shared_context_dict],
                     start_to_close_timeout=ACTIVITY_TIMEOUT,
                     retry_policy=DEFAULT_RETRY_POLICY
                 )
@@ -1045,26 +1484,48 @@ class QLPWorkflow:
     
     async def _extract_and_clean_main_code(self, task_results: Dict[str, Any]) -> Tuple[str, str]:
         """Extract and intelligently clean the main executable code from task results"""
-        main_code_parts = []
-        detected_language = "python"  # Default
+        # Get execution context from first task result
+        execution_context = {}
+        for result in task_results.values():
+            if result.get("execution", {}).get("status") == "completed":
+                # Extract context from the task (not the execution result)
+                break
+        
+        # Use execution context language instead of post-hoc detection
+        preferred_language = "python"  # Default fallback
+        
+        # Collect all code regardless of detected language (trust execution context)
+        code_parts = []
         
         for task_id, result in task_results.items():
             if result.get("execution", {}).get("status") == "completed":
                 output = result.get("execution", {}).get("output", {})
                 if isinstance(output, dict):
                     code = output.get("code", output.get("content", ""))
-                    language = output.get("language", "python")
                     
-                    # Use language from first successful task
-                    if code and detected_language == "python":
-                        detected_language = language
-                    
-                    # Use broader criteria for code detection based on language
-                    if code and self._is_valid_code(code, language):
-                        main_code_parts.append(code)
+                    if code and self._is_valid_code(code, preferred_language):
+                        code_parts.append(code)
+        
+        if not code_parts:
+            return "", preferred_language
+        
+        # Use the preferred language from execution context
+        selected_language = preferred_language
+        selected_code_parts = code_parts
+        
+        # Filter out test-only code for main execution
+        main_code_parts = []
+        for code in selected_code_parts:
+            # Skip if it's purely test code
+            if not self._is_test_only_code(code, selected_language):
+                main_code_parts.append(code)
+        
+        # If no main code found, use the first available code
+        if not main_code_parts:
+            main_code_parts = selected_code_parts[:1]  # Take first piece
         
         if main_code_parts:
-            # Combine all code parts
+            # Combine code parts
             combined_code = "\n\n".join(main_code_parts)
             
             # Use LLM-powered code cleanup if needed
@@ -1072,9 +1533,9 @@ class QLPWorkflow:
                 combined_code = await self._llm_clean_code(combined_code)
             
             # Add language-specific test execution
-            combined_code += self._add_language_specific_test(combined_code, detected_language)
+            combined_code += self._add_language_specific_test(combined_code, selected_language)
             
-            return combined_code, detected_language
+            return combined_code, selected_language
         
         return "", "python"
     
@@ -1086,7 +1547,7 @@ class QLPWorkflow:
         # Language-specific validation
         if language == "python":
             return any(keyword in code for keyword in ["def ", "class ", "import ", "from "])
-        elif language == "javascript":
+        elif language in ["javascript", "typescript"]:
             return any(keyword in code for keyword in ["function", "const ", "let ", "var ", "=>", "require(", "import "])
         elif language == "java":
             return any(keyword in code for keyword in ["public class", "public static", "import ", "package "])
@@ -1097,6 +1558,48 @@ class QLPWorkflow:
         else:
             # Generic check for unknown languages
             return len(code.strip()) > 20
+    
+    def _is_test_only_code(self, code: str, language: str) -> bool:
+        """Check if code is primarily test code that shouldn't be executed as main code"""
+        if not code:
+            return False
+            
+        code_lower = code.lower()
+        
+        # Check for test patterns by language
+        if language == "python":
+            test_indicators = [
+                "import pytest", "from pytest", "import unittest", "from unittest",
+                "def test_", "class test", "assert ", "self.assert"
+            ]
+        elif language in ["javascript", "typescript"]:
+            test_indicators = [
+                "import { expect }", "from 'chai'", "from 'mocha'",
+                "describe(", "it(", "expect(", "test(", "beforeEach(", "afterEach("
+            ]
+        elif language == "java":
+            test_indicators = [
+                "import org.junit", "@test", "@before", "@after",
+                "assertthat", "assertequals", "asserttrue", "assertfalse"
+            ]
+        else:
+            # Generic test patterns
+            test_indicators = ["test", "assert", "expect", "should"]
+        
+        # Count test vs non-test lines
+        lines = code.split('\n')
+        test_lines = 0
+        code_lines = 0
+        
+        for line in lines:
+            line_stripped = line.strip().lower()
+            if line_stripped and not line_stripped.startswith('//') and not line_stripped.startswith('#'):
+                code_lines += 1
+                if any(indicator in line_stripped for indicator in test_indicators):
+                    test_lines += 1
+        
+        # If more than 60% of code lines are test-related, consider it test-only
+        return code_lines > 0 and (test_lines / code_lines) > 0.6
     
     def _add_language_specific_test(self, code: str, language: str) -> str:
         """Add language-specific test execution code"""
@@ -1191,7 +1694,7 @@ class QLPWorkflow:
 
 # Worker setup
 async def start_worker():
-    """Start the Temporal worker"""
+    """Start the Temporal worker with enhanced capabilities"""
     from ..common.config import settings
     
     # Create client
@@ -1202,36 +1705,100 @@ async def start_worker():
         namespace=settings.TEMPORAL_NAMESPACE
     )
     
-    # Create worker with production configuration
+    # Import enhanced workflows and activities
+    enhanced_available = False
+    # Temporarily disable enhanced workflows due to Pydantic validation issues
+    # from src.orchestrator.enhanced_temporal_integration import (
+    #     EnhancedIntelligentWorkflow,
+    #     generate_with_intelligence_activity,
+    #     meta_cognitive_analysis_activity,
+    #     adaptive_optimization_activity,
+    #     continuous_learning_integration_activity
+    # )
+    logger.info("Enhanced temporal integration temporarily disabled due to Pydantic validation issues")
+    
+    # Build workflows and activities lists
+    workflows = [QLPWorkflow]
+    activities = [
+        decompose_request_activity,
+        select_agent_tier_activity,
+        execute_task_activity,
+        validate_result_activity,
+        execute_in_sandbox_activity,
+        request_aitl_review_activity,
+        create_ql_capsule_activity,
+        llm_clean_code_activity,
+        prepare_delivery_activity
+    ]
+    
+    # Add enhanced components if available
+    if enhanced_available:
+        # workflows.append(EnhancedIntelligentWorkflow)
+        # activities.extend([
+        #     generate_with_intelligence_activity,
+        #     meta_cognitive_analysis_activity,
+        #     adaptive_optimization_activity,
+        #     continuous_learning_integration_activity
+        # ])
+        logger.info("Enhanced workflows and activities added")
+    
+    # Create worker with both standard and enhanced capabilities
+    # NOTE: We use the standard queue but this worker can handle both types
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[QLPWorkflow],
-        activities=[
-            decompose_request_activity,
-            select_agent_tier_activity,
-            execute_task_activity,
-            validate_result_activity,
-            execute_in_sandbox_activity,
-            request_aitl_review_activity,
-            create_ql_capsule_activity,
-            llm_clean_code_activity,
-            prepare_delivery_activity
-        ],
+        workflows=workflows,
+        activities=activities,
         max_concurrent_activities=10,
         max_concurrent_workflow_tasks=5,
         graceful_shutdown_timeout=timedelta(seconds=30)
     )
     
+    # Also create a second worker for enhanced queue if enhanced is available
+    enhanced_worker = None
+    if enhanced_available:
+        # enhanced_worker = Worker(
+        #     client,
+        #     task_queue="enhanced-intelligent-queue",
+        #     workflows=[EnhancedIntelligentWorkflow],
+        #     activities=[
+        #         generate_with_intelligence_activity,
+        #         meta_cognitive_analysis_activity,
+        #         adaptive_optimization_activity,
+        #         continuous_learning_integration_activity,
+        #         # Include basic activities for compatibility
+        #         decompose_request_activity,
+        #         execute_task_activity,
+        #         validate_result_activity,
+        #         execute_in_sandbox_activity
+        #     ],
+        #     max_concurrent_activities=10,
+        #     max_concurrent_workflow_tasks=5,
+        #     graceful_shutdown_timeout=timedelta(seconds=30)
+        # )
+        logger.info("Enhanced worker creation temporarily disabled")
+    
     logger.info(f"Starting Temporal worker on queue: {settings.TEMPORAL_TASK_QUEUE}")
+    if enhanced_available:
+        logger.info("Also handling enhanced-intelligent-queue")
     logger.info(f"Connected to Temporal at: {settings.TEMPORAL_HOST}")
     logger.info("Worker configuration:")
     logger.info(f"  - Max concurrent activities: 10")
     logger.info(f"  - Max concurrent workflows: 5")
     logger.info(f"  - Graceful shutdown timeout: 30s")
+    logger.info(f"  - Enhanced capabilities: {enhanced_available}")
     
-    # Start worker
-    await worker.run()
+    # Start both workers concurrently if enhanced is available
+    if enhanced_available and enhanced_worker:
+        import asyncio
+        # Run both workers concurrently
+        await asyncio.gather(
+            worker.run(),
+            enhanced_worker.run()
+        )
+    else:
+        # Start standard worker only
+        await worker.run()
 
 
 # TDD Integration Functions

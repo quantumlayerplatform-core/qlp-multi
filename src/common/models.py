@@ -7,28 +7,20 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any
 import json
-from datetime import datetime as dt
-
-
-# Default factory for datetime fields
-def utcnow():
-    """Factory function for current UTC time"""
-    return datetime.utcnow()
 
 
 # Custom JSON encoder for datetime
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
-    if isinstance(obj, dt):
+    if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
 # Base model configuration for all models
 base_model_config = ConfigDict(
-    json_encoders={dt: lambda v: v.isoformat() if v else None}
+    json_encoders={datetime: lambda v: v.isoformat() if v else None}
 )
 
 
@@ -65,7 +57,7 @@ class NLPRequest(BaseModel):
     description: str
     context: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class ExecutionRequest(BaseModel):
@@ -79,7 +71,7 @@ class ExecutionRequest(BaseModel):
     requirements: Optional[str] = None
     constraints: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class Task(BaseModel):
@@ -93,9 +85,9 @@ class Task(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     assigned_agent_tier: Optional[AgentTier] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
 
 class ExecutionResult(BaseModel):
@@ -145,7 +137,7 @@ class ExecutionPlan(BaseModel):
     task_assignments: Dict[str, AgentTier]  # task_id -> agent_tier
     estimated_duration: int  # seconds
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class ValidationRequest(BaseModel):
@@ -182,7 +174,7 @@ class ValidationReport(BaseModel):
     confidence_score: float  # 0.0 to 1.0
     requires_human_review: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class QLCapsule(BaseModel):
@@ -198,7 +190,7 @@ class QLCapsule(BaseModel):
     validation_report: Optional[ValidationReport] = None
     deployment_config: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class AgentMetrics(BaseModel):
@@ -211,7 +203,7 @@ class AgentMetrics(BaseModel):
     success_rate: float
     average_execution_time: float
     total_executions: int
-    last_updated: datetime
+    last_updated: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class MemoryEntry(BaseModel):
@@ -225,8 +217,8 @@ class MemoryEntry(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     usage_count: int = 0
     success_rate: float = 0.0
-    created_at: datetime = Field(default_factory=utcnow)
-    last_used: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    last_used: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class HITLRequest(BaseModel):
@@ -240,7 +232,7 @@ class HITLRequest(BaseModel):
     options: Optional[List[str]] = None
     timeout: int = 3600  # seconds
     priority: str = "normal"  # low, normal, high, critical
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class HITLResponse(BaseModel):
@@ -251,7 +243,7 @@ class HITLResponse(BaseModel):
     user_id: str
     response: Union[str, Dict[str, Any]]
     confidence: Optional[float] = None
-    responded_at: datetime = Field(default_factory=utcnow)
+    responded_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class TenantConfig(BaseModel):
@@ -266,5 +258,5 @@ class TenantConfig(BaseModel):
     llm_preferences: Dict[str, Any]  # preferred models, temperature settings
     security_config: Dict[str, Any]
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())

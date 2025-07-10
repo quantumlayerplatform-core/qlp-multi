@@ -136,7 +136,7 @@ class AgentFactory:
                 success_rate=0.0,
                 average_execution_time=0.0,
                 total_executions=0,
-                last_updated=datetime.utcnow()
+                last_updated=datetime.utcnow().isoformat()
             )
         
         metrics = self.metrics[metrics_key]
@@ -152,7 +152,7 @@ class AgentFactory:
             (metrics.average_execution_time * (metrics.total_executions - 1) + result.execution_time) /
             metrics.total_executions
         )
-        metrics.last_updated = datetime.utcnow()
+        metrics.last_updated = datetime.utcnow().isoformat()
         
         # Store in vector memory for future optimization
         await memory_client.store_agent_metrics(metrics)

@@ -325,10 +325,10 @@ class VectorMemoryService:
                         "description": description,
                         "code": code,
                         "language": self._detect_language(filename),
-                        "validation_score": capsule.validation_report.confidence_score,
-                        "created_at": capsule.created_at.isoformat(),
+                        "validation_score": capsule.validation_report.confidence_score if capsule.validation_report and capsule.validation_report.confidence_score is not None else 0.5,
+                        "created_at": capsule.created_at,
                         "usage_count": 0,
-                        "success_rate": capsule.validation_report.confidence_score
+                        "success_rate": capsule.validation_report.confidence_score if capsule.validation_report and capsule.validation_report.confidence_score is not None else 0.5
                     }
                 )
                 
@@ -361,7 +361,7 @@ class VectorMemoryService:
                     "success_rate": metrics.success_rate,
                     "average_execution_time": metrics.average_execution_time,
                     "total_executions": metrics.total_executions,
-                    "last_updated": metrics.last_updated.isoformat()
+                    "last_updated": metrics.last_updated
                 }
             )
             
