@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from temporalio import workflow, activity
 from temporalio.client import Client
 from temporalio.worker import Worker
+from temporalio.client import WorkflowHandle
+# from temporalio.exceptions import WorkflowNotFoundError  # Not available in this version
 import structlog
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
@@ -41,6 +43,7 @@ from src.common.database import get_db
 from src.memory.client import VectorMemoryClient
 from src.agents.client import AgentFactoryClient
 from src.validation.client import ValidationMeshClient
+from src.orchestrator.github_actions_integration import GitHubActionsIntegration, integrate_ci_confidence
 # from src.orchestrator.aitl_endpoints import include_aitl_routes
 from src.nlp.extended_advanced_patterns import ExtendedAdvancedUniversalNLPEngine
 from src.nlp.pattern_selection_engine_fixed import FixedPatternSelectionEngine as PatternSelectionEngine
@@ -1311,6 +1314,221 @@ async def health_check():
     return {"status": "healthy", "service": "meta-orchestrator"}
 
 
+@app.get("/workflow/status/{workflow_id}")
+async def get_workflow_status(workflow_id: str):
+    """
+    Check the status of a running workflow
+    
+    Returns:
+        - status: "running", "completed", "failed", "not_found"
+        - result: The workflow result if completed
+        - error: Error message if failed
+        - started_at: When the workflow started
+        - workflow_id: The workflow ID
+    """
+    try:
+        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        handle = temporal_client.get_workflow_handle(workflow_id)
+        
+        # Get workflow description
+        try:
+            describe = await handle.describe()
+            
+            # Check if workflow is completed
+            if describe.status.name == "COMPLETED":
+                try:
+                    # Get the result
+                    result = await handle.result()
+                    return {
+                        "status": "completed",
+                        "workflow_id": workflow_id,
+                        "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                        "completed_at": describe.close_time.isoformat() if describe.close_time else None,
+                        "result": result
+                    }
+                except Exception as e:
+                    return {
+                        "status": "completed",
+                        "workflow_id": workflow_id,
+                        "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                        "completed_at": describe.close_time.isoformat() if describe.close_time else None,
+                        "error": f"Failed to get result: {str(e)}"
+                    }
+            
+            elif describe.status.name == "FAILED":
+                return {
+                    "status": "failed",
+                    "workflow_id": workflow_id,
+                    "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                    "failed_at": describe.close_time.isoformat() if describe.close_time else None,
+                    "error": "Workflow failed"
+                }
+            
+            elif describe.status.name == "TERMINATED":
+                return {
+                    "status": "terminated",
+                    "workflow_id": workflow_id,
+                    "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                    "terminated_at": describe.close_time.isoformat() if describe.close_time else None,
+                    "error": "Workflow was terminated"
+                }
+            
+            elif describe.status.name == "CANCELED":
+                return {
+                    "status": "canceled",
+                    "workflow_id": workflow_id,
+                    "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                    "canceled_at": describe.close_time.isoformat() if describe.close_time else None,
+                    "error": "Workflow was canceled"
+                }
+            
+            else:
+                # Still running
+                return {
+                    "status": "running",
+                    "workflow_id": workflow_id,
+                    "started_at": describe.start_time.isoformat() if describe.start_time else None,
+                    "workflow_status": describe.status.name,
+                    "memo": describe.memo if hasattr(describe, 'memo') else None
+                }
+                
+        except Exception as not_found_err:
+            # Check if it's a not found error
+            if "not found" in str(not_found_err).lower():
+                return {
+                    "status": "not_found",
+                    "workflow_id": workflow_id,
+                    "error": f"Workflow {workflow_id} not found"
+                }
+            else:
+                raise  # Re-raise if it's a different error
+            
+    except Exception as e:
+        logger.error(f"Failed to check workflow status: {e}")
+        return {
+            "status": "error",
+            "workflow_id": workflow_id,
+            "error": str(e)
+        }
+
+
+class CIConfidenceRequest(BaseModel):
+    """Request model for CI confidence boost"""
+    github_token: str = Field(..., description="GitHub access token")
+
+
+@app.post("/api/capsule/{capsule_id}/ci-confidence")
+async def apply_ci_confidence_boost(
+    capsule_id: str,
+    request: CIConfidenceRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Apply CI/CD confidence boost to a capsule based on GitHub Actions results
+    
+    This endpoint:
+    1. Retrieves the capsule and its GitHub URL
+    2. Analyzes recent CI/CD runs
+    3. Calculates a confidence boost (0.0-0.2)
+    4. Updates the capsule's confidence score
+    
+    Returns:
+        - original_confidence: The original confidence score
+        - new_confidence: The updated confidence score
+        - ci_metrics: Detailed CI/CD metrics
+        - applied_boost: The boost that was applied
+    """
+    try:
+        from src.orchestrator.capsule_storage import CapsuleStorageService
+        
+        # Get the capsule
+        storage = CapsuleStorageService(db)
+        capsule = await storage.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
+        
+        # Get GitHub URL from metadata
+        github_url = capsule.metadata.get("github_url")
+        if not github_url:
+            raise HTTPException(
+                status_code=400, 
+                detail="Capsule has not been pushed to GitHub yet"
+            )
+        
+        # Get current confidence score
+        current_confidence = capsule.validation_report.get("confidence_score", 0.5)
+        
+        # Apply CI/CD confidence boost
+        new_confidence, metrics = await integrate_ci_confidence(
+            capsule_id=capsule_id,
+            github_url=github_url,
+            github_token=request.github_token,
+            current_confidence=current_confidence
+        )
+        
+        # Update capsule confidence score
+        if new_confidence != current_confidence:
+            capsule.validation_report["confidence_score"] = new_confidence
+            capsule.validation_report["ci_boost_applied"] = True
+            capsule.validation_report["ci_metrics"] = metrics
+            
+            # Update in database
+            await storage.update_capsule_validation(
+                capsule_id, 
+                capsule.validation_report
+            )
+        
+        return {
+            "capsule_id": capsule_id,
+            "github_url": github_url,
+            "original_confidence": metrics.get("original_confidence"),
+            "new_confidence": metrics.get("new_confidence"),
+            "applied_boost": metrics.get("applied_boost"),
+            "ci_metrics": metrics
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to apply CI confidence boost: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/github/{owner}/{repo}/ci-status")
+async def get_repository_ci_status(
+    owner: str,
+    repo: str,
+    github_token: str = Query(..., description="GitHub access token")
+):
+    """
+    Get CI/CD status and metrics for a GitHub repository
+    
+    Returns:
+        - success_rate: Recent success rate (0.0-1.0)
+        - total_runs: Number of workflow runs analyzed
+        - confidence_boost: Potential confidence boost (0.0-0.2)
+        - metrics: Detailed CI/CD metrics
+    """
+    try:
+        repo_url = f"https://github.com/{owner}/{repo}"
+        integration = GitHubActionsIntegration(github_token)
+        
+        boost, metrics = await integration.calculate_ci_confidence_boost(repo_url)
+        
+        return {
+            "repository": f"{owner}/{repo}",
+            "success_rate": metrics.get("success_rate", 0.0),
+            "total_runs": metrics.get("total_runs", 0),
+            "confidence_boost": boost,
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get CI status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/test/decompose")
 async def test_decomposition(request: ExecutionRequest):
     """Test endpoint for request decomposition without Temporal"""
@@ -2252,13 +2470,16 @@ async def generate_complete_with_github(request: GitHubExecutionRequest):
     """
     Complete end-to-end pipeline: NLP → Code → Capsule → GitHub
     
-    This is a convenience endpoint that automatically enables GitHub push.
+    This endpoint starts an async workflow and returns immediately with a workflow ID.
+    Use the /workflow/status/{workflow_id} endpoint to check progress.
+    
+    For synchronous execution with a shorter timeout, use /generate/complete-with-github-sync
     """
     try:
         # Create request in the format expected by production workflow
         workflow_request = {
             "request_id": str(uuid4()),
-            "description": request.description,  # Changed from user_request to description
+            "description": request.description,
             "tenant_id": request.tenant_id,
             "user_id": request.user_id,
             "metadata": {
@@ -2281,11 +2502,61 @@ async def generate_complete_with_github(request: GitHubExecutionRequest):
             task_queue="qlp-main"
         )
         
-        # Wait for completion (with timeout)
+        # Return immediately with workflow info
+        return {
+            "success": True,
+            "workflow_id": handle.id,
+            "request_id": workflow_request["request_id"],
+            "message": "Workflow started successfully. Use the status endpoint to check progress.",
+            "status_check_url": f"/workflow/status/{handle.id}",
+            "estimated_time": "2-5 minutes"
+        }
+            
+    except Exception as e:
+        logger.error(f"Failed to start GitHub workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate/complete-with-github-sync")
+async def generate_complete_with_github_sync(request: GitHubExecutionRequest):
+    """
+    Complete end-to-end pipeline: NLP → Code → Capsule → GitHub (Synchronous)
+    
+    This endpoint waits for completion with a 60-second timeout.
+    For longer operations, use the async version: /generate/complete-with-github
+    """
+    try:
+        # Create request in the format expected by production workflow
+        workflow_request = {
+            "request_id": str(uuid4()),
+            "description": request.description,
+            "tenant_id": request.tenant_id,
+            "user_id": request.user_id,
+            "metadata": {
+                "push_to_github": True,
+                "github_token": request.github_token,
+                "github_repo_name": request.repo_name,
+                "github_private": request.private,
+                "github_enterprise": True  # Use enterprise structure
+            }
+        }
+        
+        # Initialize Temporal client
+        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        
+        # Start workflow
+        handle = await temporal_client.start_workflow(
+            "QLPWorkflow",
+            workflow_request,
+            id=f"qlp-github-{workflow_request['request_id']}",
+            task_queue="qlp-main"
+        )
+        
+        # Wait for completion with shorter timeout
         try:
             workflow_result = await asyncio.wait_for(
                 handle.result(),
-                timeout=300  # 5 minutes timeout
+                timeout=60  # 1 minute timeout for sync version
             )
             
             # Extract capsule ID from workflow result
@@ -2338,7 +2609,9 @@ async def generate_complete_with_github(request: GitHubExecutionRequest):
             return {
                 "success": False,
                 "workflow_id": handle.id,
-                "message": "Workflow is still running. Check status with /workflow/{workflow_id}/status"
+                "request_id": workflow_request["request_id"],
+                "message": "Workflow is still running. Check status with the status endpoint.",
+                "status_check_url": f"/workflow/status/{handle.id}"
             }
             
     except Exception as e:
