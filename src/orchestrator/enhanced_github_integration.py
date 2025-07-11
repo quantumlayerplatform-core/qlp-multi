@@ -632,9 +632,9 @@ setup(
         for filename, content in capsule.tests.items():
             organized[f"tests/{filename}"] = self._clean_content(content)
         
-        # Add documentation
-        if capsule.documentation:
-            organized["README.md"] = capsule.documentation
+        # Always generate a proper README instead of using capsule.documentation
+        # which might contain code instead of documentation
+        organized["README.md"] = self._generate_readme(capsule, analysis)
         
         # Add basic config files
         organized[".gitignore"] = self._generate_enhanced_gitignore(language)
