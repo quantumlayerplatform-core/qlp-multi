@@ -52,6 +52,7 @@ case "$SERVICE_NAME" in
             TEMPORAL_PORT_VAR=${TEMPORAL_PORT:-7233}
         fi
         wait_for_service "$TEMPORAL_HOSTNAME" "$TEMPORAL_PORT_VAR" "Temporal"
+        wait_for_service ${POSTGRES_HOST:-postgres} ${POSTGRES_PORT:-5432} "PostgreSQL"
         echo "Starting Temporal worker with PostgreSQL persistence..."
         exec python -m src.orchestrator.worker_production_db
         ;;

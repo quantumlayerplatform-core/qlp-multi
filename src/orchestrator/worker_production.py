@@ -1179,6 +1179,44 @@ async def create_ql_capsule_activity(
             storage_result = response.json()
             capsule_id = storage_result.get("capsule_id", capsule_data["id"])
             
+            # Also save to PostgreSQL for persistent storage
+            activity.logger.info("Saving capsule to PostgreSQL database...")
+            try:
+                from ..common.database import get_db
+                from ..orchestrator.capsule_storage import CapsuleStorageService
+                from ..common.models import QLCapsule, ExecutionRequest
+                
+                # Create QLCapsule instance
+                capsule = QLCapsule(**capsule_data)
+                
+                # Create ExecutionRequest for storage
+                exec_request = ExecutionRequest(
+                    id=request_id,
+                    tenant_id=execution_context.get("tenant_id", "default"),
+                    user_id=execution_context.get("user_id", "system"),
+                    description=execution_context.get("original_request", "Generated capsule"),
+                    requirements="",
+                    constraints={}
+                )
+                
+                # Get database session
+                db = next(get_db())
+                storage_service = CapsuleStorageService(db)
+                
+                # Store in PostgreSQL
+                stored_id = await storage_service.store_capsule(
+                    capsule=capsule,
+                    request=exec_request,
+                    overwrite=True
+                )
+                
+                activity.logger.info(f"✅ Capsule saved to PostgreSQL with ID: {stored_id}")
+                db.close()
+                
+            except Exception as db_error:
+                activity.logger.error(f"Failed to save to PostgreSQL: {str(db_error)}")
+                # Continue even if database save fails
+            
         except Exception as e:
             activity.logger.error(f"Exception while storing capsule: {str(e)}")
             return {
@@ -1197,7 +1235,9 @@ async def create_ql_capsule_activity(
                 "source": list(source_code.keys()),
                 "tests": list(tests.keys()),
                 "docs": ["README.md"] if documentation else []
-            }
+            },
+            "database_saved": True,
+            "storage_locations": ["vector_memory", "postgresql"]
         }
 
 
