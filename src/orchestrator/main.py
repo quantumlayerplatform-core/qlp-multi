@@ -818,7 +818,7 @@ Example:
 
 
 # Temporal Workflow Definition
-@workflow.defn
+@workflow.defn(name="QLPWorkflow")
 class QLPExecutionWorkflow:
     """Main execution workflow for QLP"""
     

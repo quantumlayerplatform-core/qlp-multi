@@ -19,6 +19,49 @@ from src.agents.specialized_agents import ProductionArchitectAgent
 logger = structlog.get_logger()
 
 
+def extract_json_from_llm(content: str) -> Dict[str, Any]:
+    """
+    Extract JSON from LLM response, handling markdown blocks and common issues.
+    """
+    # Clean markdown code blocks
+    content = content.strip()
+    if content.startswith('```json'):
+        content = content[7:]  # Remove ```json
+    elif content.startswith('```'):
+        content = content[3:]  # Remove ```
+    if content.endswith('```'):
+        content = content[:-3]  # Remove trailing ```
+    content = content.strip()
+    
+    # Try to extract JSON object
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(0)
+        
+        # Handle truncated JSON by counting braces
+        open_braces = json_str.count('{')
+        close_braces = json_str.count('}')
+        
+        if open_braces > close_braces:
+            json_str += '}' * (open_braces - close_braces)
+        
+        # Handle arrays
+        open_brackets = json_str.count('[')
+        close_brackets = json_str.count(']')
+        
+        if open_brackets > close_brackets:
+            json_str += ']' * (open_brackets - close_brackets)
+        
+        # Handle trailing commas which are common in LLM output
+        # Remove commas before closing braces/brackets
+        json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+        
+        return json.loads(json_str)
+    
+    # Fallback to direct parsing
+    return json.loads(content)
+
+
 class EnhancedGitHubIntegration(GitHubIntegrationV2):
     """
     Extends GitHubIntegrationV2 to add intelligent project structure generation
@@ -118,11 +161,15 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
         )
         
         try:
-            analysis = json.loads(response['content'])
+            analysis = extract_json_from_llm(response['content'])
             logger.info("LLM analysis complete", project_type=analysis.get('project_type'))
             return analysis
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse LLM response, using defaults")
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Failed to parse LLM response, using defaults",
+                error=str(e),
+                response_preview=response['content'][:500] if response.get('content') else None
+            )
             return self._get_default_analysis(capsule)
     
     async def _create_intelligent_structure(
@@ -182,7 +229,7 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
         )
         
         try:
-            mapping_data = json.loads(response['content'])
+            mapping_data = extract_json_from_llm(response['content'])
             
             # Create the new file structure
             organized_files = {}
@@ -634,7 +681,7 @@ setup(
         
         # Always generate a proper README instead of using capsule.documentation
         # which might contain code instead of documentation
-        organized["README.md"] = self._generate_readme(capsule, analysis)
+        organized["README.md"] = self._generate_readme(capsule, self._get_default_analysis(capsule))
         
         # Add basic config files
         organized[".gitignore"] = self._generate_enhanced_gitignore(language)

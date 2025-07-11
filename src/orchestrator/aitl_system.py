@@ -6,6 +6,7 @@ Advanced code refinement with meta-cognitive strategies and reviewer ensembles.
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -20,6 +21,59 @@ from src.common.config import settings
 from src.common.models import TaskResult, ValidationReport
 
 logger = structlog.get_logger()
+
+
+def extract_json_from_llm_response(content: str) -> dict:
+    """
+    Extract JSON from LLM response, handling markdown code blocks and truncated responses.
+    
+    Args:
+        content: Raw LLM response
+        
+    Returns:
+        Parsed JSON dictionary
+        
+    Raises:
+        json.JSONDecodeError: If JSON parsing fails
+    """
+    # Clean markdown code blocks
+    content = content.strip()
+    if content.startswith('```json'):
+        content = content[7:]  # Remove ```json
+    elif content.startswith('```'):
+        content = content[3:]  # Remove ```
+    if content.endswith('```'):
+        content = content[:-3]  # Remove trailing ```
+    content = content.strip()
+    
+    # Try to extract JSON object from the content
+    # This handles cases where LLM adds extra text before/after JSON
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(0)
+        
+        # Handle common truncation issues
+        # Count braces to check if JSON is complete
+        open_braces = json_str.count('{')
+        close_braces = json_str.count('}')
+        
+        if open_braces > close_braces:
+            # Try to add missing closing braces
+            json_str += '}' * (open_braces - close_braces)
+        
+        # Also check brackets for arrays
+        open_brackets = json_str.count('[')
+        close_brackets = json_str.count(']')
+        
+        if open_brackets > close_brackets:
+            # Add missing closing brackets
+            json_str += ']' * (open_brackets - close_brackets)
+        
+        return json.loads(json_str)
+    else:
+        # Try direct parsing
+        return json.loads(content)
+
 
 # Helper function to get model name based on client type
 def get_model_name(llm_client):
@@ -138,15 +192,8 @@ class IntentDiffingRefiner:
                 )
                 content = response.content[0].text
             
-            # Try to extract JSON from the content
-            # Sometimes LLMs add extra text before/after JSON
-            import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                result = json.loads(json_str)
-            else:
-                result = json.loads(content)
+            # Extract and parse JSON using our helper
+            result = extract_json_from_llm_response(content)
             
             return RefinementResult(
                 refined_code=result["refined_code"],
@@ -225,15 +272,8 @@ class FailureSynthesisRefiner:
                 )
                 content = response.content[0].text
             
-            # Try to extract JSON from the content
-            # Sometimes LLMs add extra text before/after JSON
-            import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                result = json.loads(json_str)
-            else:
-                result = json.loads(content)
+            # Extract and parse JSON using our helper
+            result = extract_json_from_llm_response(content)
             
             return RefinementResult(
                 refined_code=result["refined_code"],
