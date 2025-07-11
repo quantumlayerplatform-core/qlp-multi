@@ -999,6 +999,35 @@ async def create_ql_capsule_activity(
                     except:
                         pass
                 
+                # Check if code is JSON with code/documentation fields
+                if isinstance(code, str) and code.strip().startswith('```json'):
+                    try:
+                        # Extract JSON from markdown code block
+                        json_str = code.strip()
+                        if json_str.startswith('```json'):
+                            json_str = json_str[7:]  # Remove ```json
+                        if json_str.endswith('```'):
+                            json_str = json_str[:-3]  # Remove ```
+                        
+                        import json
+                        parsed_json = json.loads(json_str)
+                        if isinstance(parsed_json, dict):
+                            # Extract actual code from JSON
+                            if 'code' in parsed_json:
+                                code = parsed_json['code']
+                            # Extract actual documentation
+                            if 'documentation' in parsed_json and isinstance(parsed_json['documentation'], str):
+                                # Add the actual documentation text to documentation list
+                                doc_text = parsed_json['documentation']
+                                if doc_text and not doc_text.startswith('{'):  # Ensure it's not JSON
+                                    documentation.append(doc_text)
+                                    activity.logger.info(f"DEBUG: Extracted documentation from JSON output")
+                                # Skip further processing of this as code
+                                continue
+                    except Exception as e:
+                        activity.logger.debug(f"Failed to parse JSON output: {e}")
+                        pass
+                
                 # Clean up markdown code blocks if present
                 if isinstance(code, str) and code.strip().startswith("```"):
                     lines = code.strip().split('\n')
