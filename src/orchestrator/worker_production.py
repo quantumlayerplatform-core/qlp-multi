@@ -340,6 +340,13 @@ Respond only with code and brief inline comments. No explanations or mixed langu
     # Check if task should use TDD
     should_use_tdd = _should_use_tdd(task)
     
+    # Debug logging
+    activity.logger.info(f"TDD check for task {task.get('task_id', 'unknown')}: {should_use_tdd}")
+    activity.logger.info(f"Task type: {task.get('type', 'N/A')}, Description: {task.get('description', '')[:100]}")
+    activity.logger.info(f"Task complexity: {task.get('complexity', 'N/A')}")
+    activity.logger.info(f"Task metadata: {task.get('metadata', {})}")
+    activity.logger.info(f"Task meta: {task.get('meta', {})}")
+    
     if should_use_tdd:
         activity.logger.info(f"Using TDD for task {task['task_id']}")
         return await _execute_with_tdd(task, tier, request_id)
@@ -1884,10 +1891,59 @@ async def start_worker():
 
 def _should_use_tdd(task: Dict[str, Any]) -> bool:
     """Determine if task should use Test-Driven Development"""
-    # Temporarily disable TDD to fix settings import issue
-    return False
+    # Import settings locally to avoid circular imports
+    from ..common.config import settings
     
-    return False
+    logger.info(f"=== TDD DECISION START for task {task.get('task_id', 'unknown')} ===")
+    
+    # Check if TDD is enabled globally
+    tdd_enabled = getattr(settings, 'TDD_ENABLED', True)
+    logger.info(f"TDD_ENABLED setting: {tdd_enabled}")
+    if not tdd_enabled:
+        logger.info("TDD is globally disabled")
+        return False
+    
+    task_type = task.get("type", "").lower()
+    description = task.get("description", "").lower()
+    complexity = task.get("complexity", "medium").lower()
+    
+    logger.info(f"Task analysis - type: '{task_type}', complexity: '{complexity}'")
+    logger.info(f"Description preview: {description[:200]}...")
+    
+    # TDD is beneficial for:
+    # 1. Code generation tasks
+    # 2. Tasks with clear test requirements
+    # 3. Complex or critical functionality
+    # 4. API/service implementations
+    
+    tdd_indicators = [
+        task_type in ["code_generation", "implementation", "feature"],
+        any(word in description for word in ["test", "testable", "unit test", "coverage"]),
+        complexity in ["high", "complex"],
+        any(word in description for word in ["api", "service", "endpoint", "handler"]),
+        "algorithm" in description or "function" in description,
+        task.get("meta", {}).get("require_tests", False)
+    ]
+    
+    # Debug logging with details
+    logger.info(f"TDD indicator details:")
+    logger.info(f"  - Code generation task: {tdd_indicators[0]} (type='{task_type}')")
+    logger.info(f"  - Test keywords found: {tdd_indicators[1]}")
+    logger.info(f"  - High complexity: {tdd_indicators[2]} (complexity='{complexity}')")
+    logger.info(f"  - API/service keywords: {tdd_indicators[3]}")
+    logger.info(f"  - Algorithm/function keywords: {tdd_indicators[4]}")
+    logger.info(f"  - Explicit test requirement: {tdd_indicators[5]}")
+    
+    logger.info(f"TDD indicators summary: {tdd_indicators}")
+    logger.info(f"TDD indicator count: {sum(tdd_indicators)}")
+    
+    # Use TDD if minimum indicators threshold is met
+    min_indicators = getattr(settings, 'TDD_MIN_INDICATORS', 2)
+    result = sum(tdd_indicators) >= min_indicators
+    
+    logger.info(f"TDD decision: {result} (min_indicators: {min_indicators})")
+    logger.info(f"=== TDD DECISION END ===")
+    return result
 
 
 async def _execute_with_tdd(task: Dict[str, Any], tier: str, request_id: str) -> Dict[str, Any]:
@@ -1902,12 +1958,14 @@ async def _execute_with_tdd(task: Dict[str, Any], tier: str, request_id: str) ->
         
         try:
             # Step 1: Generate tests first
+            activity.heartbeat("TDD Step 1: Generating tests")
             test_generation_result = await _generate_tests_first(client, task, tier, request_id)
             
             if test_generation_result.get("status") != "completed":
                 return test_generation_result
             
             # Step 2: Generate code to pass tests
+            activity.heartbeat("TDD Step 2: Generating code to pass tests")
             code_generation_result = await _generate_code_for_tests(
                 client, task, tier, request_id, test_generation_result
             )
@@ -1916,6 +1974,7 @@ async def _execute_with_tdd(task: Dict[str, Any], tier: str, request_id: str) ->
                 return code_generation_result
             
             # Step 3: Verify and refine
+            activity.heartbeat("TDD Step 3: Verifying and refining")
             final_result = await _verify_and_refine_tdd(
                 client, task, tier, request_id, 
                 test_generation_result, code_generation_result

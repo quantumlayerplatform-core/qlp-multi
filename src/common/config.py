@@ -148,6 +148,16 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = Field(default=4000)
     LLM_TIMEOUT: int = Field(default=120)
     
+    # Test-Driven Development
+    TDD_ENABLED: bool = Field(
+        default=True,
+        description="Enable Test-Driven Development for code generation tasks"
+    )
+    TDD_MIN_INDICATORS: int = Field(
+        default=2,
+        description="Minimum number of TDD indicators required to trigger TDD workflow"
+    )
+    
     # AITL Configuration (AI-in-the-Loop)
     AITL_ENABLED: bool = Field(default=False, description="Enable AITL review system")
     AITL_AUTO_PROCESS: bool = Field(default=False, description="Auto-process AITL reviews")

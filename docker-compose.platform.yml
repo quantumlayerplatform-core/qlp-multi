@@ -266,8 +266,12 @@ services:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./src:/app/src:ro
     networks:
       - qlp-network
+    user: root
+    privileged: true
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import src.orchestrator.worker_production; print('Worker OK')\" || exit 1"]
       interval: 30s
