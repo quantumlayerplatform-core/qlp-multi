@@ -384,6 +384,27 @@ class CapsuleStorageService:
             'created_at': capsule.created_at.isoformat(),
             'updated_at': capsule.updated_at.isoformat()
         }
+    
+    @handle_errors
+    async def update_capsule_metadata(self, capsule_id: str, metadata: Dict[str, Any]) -> bool:
+        """Update capsule metadata"""
+        try:
+            capsule = self.repository.get_capsule(capsule_id)
+            if not capsule:
+                return False
+            
+            # Update metadata
+            capsule.meta_data = metadata
+            capsule.updated_at = datetime.now(timezone.utc)
+            
+            self.db.commit()
+            logger.info(f"Updated capsule metadata for {capsule_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update capsule metadata: {str(e)}")
+            self.db.rollback()
+            return False
 
 
 # Factory function for dependency injection

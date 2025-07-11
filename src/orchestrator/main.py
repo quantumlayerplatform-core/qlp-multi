@@ -76,6 +76,10 @@ app.include_router(critique_router)
 from src.orchestrator.download_endpoints import router as download_router
 app.include_router(download_router)
 
+# Include GitHub integration endpoints
+from src.orchestrator.github_endpoints import router as github_router
+app.include_router(github_router)
+
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
 if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
