@@ -31,12 +31,25 @@ logger = structlog.get_logger()
 # Azure deployment name mapping
 # Maps OpenAI model names to Azure deployment names
 AZURE_DEPLOYMENT_MAPPING = {
+    # T0 - Simple tasks (gpt-35-turbo)
     "gpt-3.5-turbo": os.getenv("AZURE_GPT35_DEPLOYMENT", "gpt-35-turbo"),
-    "gpt-4-turbo-preview": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),  # Your deployment name
-    "gpt-4-turbo": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),  # Your deployment name
-    "gpt-4": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),  # Your deployment name
-    "gpt-4o": os.getenv("AZURE_GPT4O_DEPLOYMENT", "gpt-4o"),
-    "gpt-4o-mini": os.getenv("AZURE_GPT4O_DEPLOYMENT", "gpt-4o-mini"),
+    "gpt-35-turbo": "gpt-35-turbo",
+    
+    # T1 - Medium tasks (gpt-4.1-mini or gpt-4.1-nano)
+    "gpt-4o-mini": os.getenv("AZURE_GPT4_MINI_DEPLOYMENT", "gpt-4.1-mini"),
+    "gpt-4.1-mini": "gpt-4.1-mini",
+    "gpt-4.1-nano": "gpt-4.1-nano",
+    
+    # T2 - Complex tasks (gpt-4 or o4-mini)
+    "gpt-4-turbo-preview": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
+    "gpt-4-turbo": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
+    "gpt-4": "gpt-4",
+    "o4-mini": "o4-mini",
+    
+    # T3 - Meta tasks (gpt-4.1)
+    "gpt-4.1": "gpt-4.1",
+    
+    # Embeddings
     "text-embedding-ada-002": os.getenv("AZURE_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002"),
 }
 
@@ -336,31 +349,55 @@ def get_model_for_tier(tier: str) -> tuple[str, LLMProvider]:
     Returns (model_name, provider)
     """
     
-    # Check available providers
+    # Check if we should use Azure models from config
+    provider_config = {
+        "T0": settings.LLM_T0_PROVIDER,
+        "T1": settings.LLM_T1_PROVIDER,
+        "T2": settings.LLM_T2_PROVIDER,
+        "T3": settings.LLM_T3_PROVIDER
+    }
+    
+    azure_model_config = {
+        "T0": settings.AZURE_T0_MODEL,
+        "T1": settings.AZURE_T1_MODEL,
+        "T2": settings.AZURE_T2_MODEL,
+        "T3": settings.AZURE_T3_MODEL
+    }
+    
+    # Get provider preference for this tier
+    preferred_provider = provider_config.get(tier, "azure")
+    
+    # If Azure is preferred and available, use configured Azure model
+    if preferred_provider == "azure" and llm_client.is_provider_available(LLMProvider.AZURE_OPENAI):
+        azure_model = azure_model_config.get(tier, "gpt-35-turbo")
+        return azure_model, LLMProvider.AZURE_OPENAI
+    
+    # Otherwise, check available providers
     has_azure = llm_client.is_provider_available(LLMProvider.AZURE_OPENAI)
     has_openai = llm_client.is_provider_available(LLMProvider.OPENAI)
     has_anthropic = llm_client.is_provider_available(LLMProvider.ANTHROPIC)
     has_groq = llm_client.is_provider_available(LLMProvider.GROQ)
     
+    # Fallback tier mapping if preferred provider is not available
     tier_mapping = {
         "T0": [
-            (has_azure, ("gpt-3.5-turbo", LLMProvider.AZURE_OPENAI)),  # Prioritize Azure OpenAI
+            (has_azure, (settings.AZURE_T0_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_groq, ("llama3-8b-8192", LLMProvider.GROQ)),
             (has_openai, ("gpt-3.5-turbo", LLMProvider.OPENAI)),
         ],
         "T1": [
-            (has_azure, ("gpt-4o-mini", LLMProvider.AZURE_OPENAI)),
+            (has_azure, (settings.AZURE_T1_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-4o-mini", LLMProvider.OPENAI)),
             (has_azure, ("gpt-3.5-turbo", LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-3.5-turbo", LLMProvider.OPENAI)),
         ],
         "T2": [
-            (has_azure, ("gpt-4-turbo-preview", LLMProvider.AZURE_OPENAI)),
+            (has_azure, (settings.AZURE_T2_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-4-turbo-preview", LLMProvider.OPENAI)),
             (has_anthropic, ("claude-3-opus-20240229", LLMProvider.ANTHROPIC)),
         ],
         "T3": [
-            (has_azure, ("gpt-4-turbo-preview", LLMProvider.AZURE_OPENAI)),
+            (has_azure, (settings.AZURE_T3_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-4-turbo-preview", LLMProvider.OPENAI)),
             (has_anthropic, ("claude-3-opus-20240229", LLMProvider.ANTHROPIC)),
         ]
@@ -375,6 +412,6 @@ def get_model_for_tier(tier: str) -> tuple[str, LLMProvider]:
     if has_openai:
         return "gpt-3.5-turbo", LLMProvider.OPENAI
     elif has_azure:
-        return "gpt-3.5-turbo", LLMProvider.AZURE_OPENAI
+        return "gpt-35-turbo", LLMProvider.AZURE_OPENAI
     else:
         raise ValueError("No LLM providers available")

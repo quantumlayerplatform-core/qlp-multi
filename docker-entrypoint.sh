@@ -52,8 +52,8 @@ case "$SERVICE_NAME" in
             TEMPORAL_PORT_VAR=${TEMPORAL_PORT:-7233}
         fi
         wait_for_service "$TEMPORAL_HOSTNAME" "$TEMPORAL_PORT_VAR" "Temporal"
-        echo "Starting Temporal worker..."
-        exec python -m src.orchestrator.worker_production
+        echo "Starting Temporal worker with PostgreSQL persistence..."
+        exec python -m src.orchestrator.worker_production_db
         ;;
     *)
         echo "Unknown service: $SERVICE_NAME"

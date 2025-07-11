@@ -64,6 +64,10 @@ app.add_middleware(
 # Include AITL routes - commented out due to import issues
 # include_aitl_routes(app)
 
+# Include capsule endpoints with PostgreSQL storage
+from src.orchestrator.capsule_endpoints import router as capsule_router
+app.include_router(capsule_router)
+
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
 if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:

@@ -159,15 +159,27 @@ class Settings(BaseSettings):
     )
     
     # AITL Configuration (AI-in-the-Loop)
-    AITL_ENABLED: bool = Field(default=False, description="Enable AITL review system")
+    AITL_ENABLED: bool = Field(default=True, description="Enable AITL review system")
     AITL_AUTO_PROCESS: bool = Field(default=False, description="Auto-process AITL reviews")
-    AITL_CONFIDENCE_THRESHOLD: float = Field(default=0.75, description="Confidence threshold for AITL approval")
+    AITL_CONFIDENCE_THRESHOLD: float = Field(default=0.5, description="Confidence threshold for AITL approval")
     
     # LLM Provider Selection by Tier
-    LLM_T0_PROVIDER: str = Field(default="groq", description="Provider for T0 agents")
-    LLM_T1_PROVIDER: str = Field(default="openai", description="Provider for T1 agents")
-    LLM_T2_PROVIDER: str = Field(default="openai", description="Provider for T2 agents")
-    LLM_T3_PROVIDER: str = Field(default="anthropic", description="Provider for T3 agents")
+    LLM_T0_PROVIDER: str = Field(default="azure", description="Provider for T0 agents")
+    LLM_T1_PROVIDER: str = Field(default="azure", description="Provider for T1 agents")
+    LLM_T2_PROVIDER: str = Field(default="azure", description="Provider for T2 agents")
+    LLM_T3_PROVIDER: str = Field(default="azure", description="Provider for T3 agents")
+    
+    # Azure OpenAI Model Selection by Tier
+    AZURE_T0_MODEL: str = Field(default="gpt-35-turbo", description="Azure model for T0 agents (simple tasks)")
+    AZURE_T1_MODEL: str = Field(default="gpt-4.1-mini", description="Azure model for T1 agents (medium tasks)")
+    AZURE_T2_MODEL: str = Field(default="gpt-4", description="Azure model for T2 agents (complex tasks)")
+    AZURE_T3_MODEL: str = Field(default="gpt-4.1", description="Azure model for T3 agents (meta-agents)")
+    
+    # Azure OpenAI Deployment Names by Tier
+    AZURE_T0_DEPLOYMENT: str = Field(default="gpt-35-turbo", description="Azure deployment for T0")
+    AZURE_T1_DEPLOYMENT: str = Field(default="gpt-4.1-mini", description="Azure deployment for T1")
+    AZURE_T2_DEPLOYMENT: str = Field(default="gpt-4", description="Azure deployment for T2")
+    AZURE_T3_DEPLOYMENT: str = Field(default="gpt-4.1", description="Azure deployment for T3")
     
     # Multi-tenancy
     MULTI_TENANT_ENABLED: bool = Field(default=True)

@@ -36,5 +36,5 @@ USER qlp
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import temporalio; import sys; sys.exit(0)"
 
-# Start the worker
-CMD ["python", "-m", "src.orchestrator.worker_production"]
+# Start the production worker with database persistence
+CMD ["python", "-m", "src.orchestrator.worker_production_db"]
