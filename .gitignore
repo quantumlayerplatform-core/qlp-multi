@@ -209,3 +209,4 @@ docs/.doctrees/
 qlp-storage/
 capsules/
 sandbox-executions/
+*_capsule_*/

@@ -68,6 +68,14 @@ app.add_middleware(
 from src.orchestrator.capsule_endpoints import router as capsule_router
 app.include_router(capsule_router)
 
+# Include critique endpoints for capsule quality assessment
+from src.orchestrator.critique_endpoints import router as critique_router
+app.include_router(critique_router)
+
+# Include download endpoints for capsule export
+from src.orchestrator.download_endpoints import router as download_router
+app.include_router(download_router)
+
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
 if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
