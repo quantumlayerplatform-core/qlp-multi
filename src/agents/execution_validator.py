@@ -105,8 +105,8 @@ class ExecutionValidator:
         
         try:
             # Use sandbox for safe execution
-            # Determine language from code
-            language = "python" if ("def " in code or "import " in code) else "javascript"
+            # Use intelligent language detection
+            language = await self._detect_code_language(code)
             
             result = await self.sandbox_client.execute(
                 code=code,
@@ -198,3 +198,39 @@ class ExecutionValidator:
                 "runtime_errors": [str(e)],
                 "performance": {}
             }
+    
+    async def _detect_code_language(self, code: str) -> str:
+        """Intelligently detect programming language from code"""
+        # Quick pattern check for common languages
+        patterns = {
+            "python": [r'^\s*def\s+', r'^\s*import\s+', r'^\s*from\s+.*\s+import', r'if\s+__name__'],
+            "javascript": [r'function\s+\w+\s*\(', r'const\s+\w+\s*=', r'let\s+\w+\s*=', r'=>'],
+            "java": [r'public\s+class', r'public\s+static\s+void\s+main', r'import\s+java\.'],
+            "go": [r'package\s+\w+', r'func\s+\w+\s*\(', r':='],
+            "rust": [r'fn\s+\w+\s*\(', r'let\s+mut\s+', r'impl\s+'],
+            "cpp": [r'#include\s*<', r'using\s+namespace', r'int\s+main\s*\('],
+        }
+        
+        import re
+        for lang, patterns_list in patterns.items():
+            for pattern in patterns_list:
+                if re.search(pattern, code, re.MULTILINE):
+                    return lang
+        
+        # If no pattern matches, analyze syntax more carefully
+        # Check for language-specific keywords and structures
+        if "console.log" in code or "require(" in code or "module.exports" in code:
+            return "javascript"
+        elif "print(" in code or "self." in code or "__init__" in code:
+            return "python"
+        elif "System.out.println" in code or "public class" in code:
+            return "java"
+        elif "fmt.Print" in code or "package main" in code:
+            return "go"
+        elif "println!" in code or "fn main()" in code:
+            return "rust"
+        elif "#include" in code or "std::" in code:
+            return "cpp"
+        
+        # Default to python for data science context
+        return "python"

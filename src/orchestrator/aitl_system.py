@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple
 from uuid import uuid4
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AsyncAzureOpenAI
 from anthropic import AsyncAnthropic
 import structlog
 
@@ -20,6 +20,18 @@ from src.common.config import settings
 from src.common.models import TaskResult, ValidationReport
 
 logger = structlog.get_logger()
+
+# Helper function to get model name based on client type
+def get_model_name(llm_client):
+    """Get appropriate model name based on LLM client type"""
+    if isinstance(llm_client, AsyncAzureOpenAI):
+        # For Azure, use the deployment name
+        return settings.AZURE_OPENAI_DEPLOYMENT_NAME
+    elif isinstance(llm_client, AsyncOpenAI):
+        return "gpt-4"
+    else:
+        # Anthropic
+        return "claude-3-sonnet-20240229"
 
 class RefinementPattern(Enum):
     """Available refinement patterns"""
@@ -111,7 +123,7 @@ class IntentDiffingRefiner:
             if hasattr(self.llm_client, 'chat'):
                 # OpenAI client
                 response = await self.llm_client.chat.completions.create(
-                    model="gpt-4",
+                    model=get_model_name(self.llm_client),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3
                 )
@@ -126,7 +138,15 @@ class IntentDiffingRefiner:
                 )
                 content = response.content[0].text
             
-            result = json.loads(content)
+            # Try to extract JSON from the content
+            # Sometimes LLMs add extra text before/after JSON
+            import re
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                result = json.loads(json_str)
+            else:
+                result = json.loads(content)
             
             return RefinementResult(
                 refined_code=result["refined_code"],
@@ -139,6 +159,7 @@ class IntentDiffingRefiner:
             
         except Exception as e:
             logger.error(f"Intent diffing refinement failed: {e}")
+            logger.debug(f"Raw LLM response: {content[:500] if 'content' in locals() else 'No content'}")
             return RefinementResult(
                 refined_code=context.original_code,
                 confidence_score=0.1,
@@ -190,7 +211,7 @@ class FailureSynthesisRefiner:
         try:
             if hasattr(self.llm_client, 'chat'):
                 response = await self.llm_client.chat.completions.create(
-                    model="gpt-4",
+                    model=get_model_name(self.llm_client),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.2
                 )
@@ -204,7 +225,15 @@ class FailureSynthesisRefiner:
                 )
                 content = response.content[0].text
             
-            result = json.loads(content)
+            # Try to extract JSON from the content
+            # Sometimes LLMs add extra text before/after JSON
+            import re
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                result = json.loads(json_str)
+            else:
+                result = json.loads(content)
             
             return RefinementResult(
                 refined_code=result["refined_code"],
@@ -217,6 +246,7 @@ class FailureSynthesisRefiner:
             
         except Exception as e:
             logger.error(f"Failure synthesis refinement failed: {e}")
+            logger.debug(f"Raw LLM response: {content[:500] if 'content' in locals() else 'No content'}")
             return RefinementResult(
                 refined_code=context.original_code,
                 confidence_score=0.1,
@@ -321,7 +351,7 @@ class ReviewerEnsembleRefiner:
         try:
             if hasattr(self.llm_client, 'chat'):
                 response = await self.llm_client.chat.completions.create(
-                    model="gpt-4",
+                    model=get_model_name(self.llm_client),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3
                 )
@@ -369,7 +399,7 @@ class ReviewerEnsembleRefiner:
         try:
             if hasattr(self.llm_client, 'chat'):
                 response = await self.llm_client.chat.completions.create(
-                    model="gpt-4",
+                    model=get_model_name(self.llm_client),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3
                 )
@@ -574,11 +604,20 @@ async def get_aitl_orchestrator():
     global _global_orchestrator
     
     if _global_orchestrator is None:
-        # Initialize LLM client
-        if settings.OPENAI_API_KEY:
-            llm_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        # Initialize LLM client - prefer Azure OpenAI
+        if settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT:
+            logger.info("Using Azure OpenAI for AITL refinement")
+            llm_client = AsyncAzureOpenAI(
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_version=settings.AZURE_OPENAI_API_VERSION,
+                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
+            )
         elif settings.ANTHROPIC_API_KEY:
+            logger.info("Using Anthropic Claude for AITL refinement")
             llm_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        elif settings.OPENAI_API_KEY:
+            logger.warning("Using OpenAI for AITL refinement (may have quota issues)")
+            llm_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         else:
             raise ValueError("No LLM client available for AITL orchestrator")
         

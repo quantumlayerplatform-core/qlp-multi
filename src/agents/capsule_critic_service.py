@@ -40,7 +40,7 @@ class CapsuleCritiqueRecord(Base):
     improvement_priorities = Column(JSON, nullable=False)
     
     overall_reasoning = Column(String, nullable=False)
-    metadata = Column(JSON, default={})
+    critique_metadata = Column(JSON, default={})
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -226,7 +226,7 @@ class CapsuleCriticService:
                 key_weaknesses=critique.key_weaknesses,
                 improvement_priorities=critique.improvement_priorities,
                 overall_reasoning=critique.overall_reasoning,
-                metadata=critique.metadata
+                critique_metadata=critique.metadata
             )
             
             self.db_session.add(critique_record)

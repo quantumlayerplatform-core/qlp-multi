@@ -103,17 +103,53 @@ class CapsuleStorageService:
         if capsule_model.validation_report:
             validation_report = ValidationReport(**capsule_model.validation_report)
         
+        # Parse JSON fields if they're strings
+        source_code = capsule_model.source_code
+        if isinstance(source_code, str):
+            try:
+                source_code = json.loads(source_code)
+            except:
+                source_code = {}
+        
+        tests = capsule_model.tests
+        if isinstance(tests, str):
+            try:
+                tests = json.loads(tests)
+            except:
+                tests = {}
+        
+        manifest = capsule_model.manifest
+        if isinstance(manifest, str):
+            try:
+                manifest = json.loads(manifest)
+            except:
+                manifest = {}
+        
+        deployment_config = capsule_model.deployment_config
+        if isinstance(deployment_config, str):
+            try:
+                deployment_config = json.loads(deployment_config)
+            except:
+                deployment_config = {}
+        
+        metadata = capsule_model.meta_data
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except:
+                metadata = {}
+        
         capsule = QLCapsule(
             id=str(capsule_model.id),
             request_id=capsule_model.request_id,
-            manifest=capsule_model.manifest or {},
-            source_code=capsule_model.source_code or {},
-            tests=capsule_model.tests or {},
+            manifest=manifest or {},
+            source_code=source_code or {},
+            tests=tests or {},
             documentation=capsule_model.documentation or "",
             validation_report=validation_report,
-            deployment_config=capsule_model.deployment_config or {},
-            metadata=capsule_model.meta_data or {},
-            created_at=capsule_model.created_at
+            deployment_config=deployment_config or {},
+            metadata=metadata or {},
+            created_at=capsule_model.created_at.isoformat() if capsule_model.created_at else datetime.utcnow().isoformat()
         )
         
         logger.info("Retrieved capsule", capsule_id=capsule_id)

@@ -80,6 +80,14 @@ app.include_router(download_router)
 from src.orchestrator.github_endpoints import router as github_router
 app.include_router(github_router)
 
+# Include production capsule endpoints
+from src.orchestrator.production_endpoints import router as production_router
+app.include_router(production_router)
+
+# Include enterprise-grade endpoints
+from src.orchestrator.enterprise_endpoints import router as enterprise_router
+app.include_router(enterprise_router)
+
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
 if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
@@ -891,10 +899,87 @@ class QLPExecutionWorkflow:
             start_to_close_timeout=datetime.timedelta(minutes=5)
         )
         
+        # Step 8: Push to GitHub if requested
+        if request.metadata.get("push_to_github", False):
+            github_result = await workflow.execute_activity(
+                push_to_github_activity,
+                {
+                    "capsule": capsule,
+                    "github_token": request.metadata.get("github_token"),
+                    "repo_name": request.metadata.get("github_repo_name"),
+                    "private": request.metadata.get("github_private", False),
+                    "use_enterprise": request.metadata.get("github_enterprise", True)
+                },
+                start_to_close_timeout=datetime.timedelta(minutes=5)
+            )
+            
+            # Update capsule metadata with GitHub info
+            capsule.metadata["github_url"] = github_result.get("repository_url")
+            capsule.metadata["github_pushed_at"] = github_result.get("pushed_at")
+            capsule.metadata["github_files_created"] = github_result.get("files_created")
+        
         return capsule
 
 
 # Activity implementations
+@activity.defn
+async def push_to_github_activity(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Push capsule to GitHub with enterprise structure"""
+    try:
+        capsule = params["capsule"]
+        github_token = params.get("github_token")
+        repo_name = params.get("repo_name")
+        private = params.get("private", False)
+        use_enterprise = params.get("use_enterprise", True)
+        
+        # Use environment token if not provided
+        if not github_token:
+            import os
+            github_token = os.getenv("GITHUB_TOKEN")
+            if not github_token:
+                raise ValueError("GitHub token required in metadata or GITHUB_TOKEN environment variable")
+        
+        # Generate repo name if not provided
+        if not repo_name:
+            project_name = capsule.manifest.get("name", f"qlp-project-{capsule.id[:8]}")
+            repo_name = project_name.lower().replace(" ", "-").replace("_", "-")
+        
+        # Import GitHub integration
+        from src.orchestrator.enhanced_github_integration import EnhancedGitHubIntegration
+        from src.orchestrator.github_integration_v2 import GitHubIntegrationV2
+        
+        # Choose integration based on preference
+        if use_enterprise:
+            github = EnhancedGitHubIntegration(github_token)
+        else:
+            github = GitHubIntegrationV2(github_token)
+        
+        # Push to GitHub
+        result = await github.push_capsule_atomic(
+            capsule=capsule,
+            repo_name=repo_name,
+            private=private,
+            use_intelligent_structure=use_enterprise
+        )
+        
+        logger.info(f"Successfully pushed capsule to GitHub: {result['repository_url']}")
+        
+        return {
+            "repository_url": result["repository_url"],
+            "clone_url": result["clone_url"],
+            "ssh_url": result["ssh_url"],
+            "files_created": result["files_created"],
+            "pushed_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to push to GitHub: {str(e)}")
+        # Don't fail the workflow, just log the error
+        return {
+            "error": str(e),
+            "pushed": False
+        }
+
 @activity.defn
 async def search_similar_executions_activity(request: ExecutionRequest) -> List[Dict[str, Any]]:
     """🧠 EPIC: Search for similar past executions for learning"""
@@ -1142,7 +1227,16 @@ def _calculate_duration(params: Dict[str, Any]) -> float:
 # FastAPI endpoints
 @app.post("/execute", response_model=Dict[str, str])
 async def execute_request(request: ExecutionRequest):
-    """Submit a new execution request"""
+    """
+    Submit a new execution request
+    
+    To enable GitHub push, include these fields in metadata:
+    - push_to_github: true
+    - github_token: "your-github-token" (optional, uses GITHUB_TOKEN env var if not provided)
+    - github_repo_name: "repo-name" (optional, auto-generated from project name)
+    - github_private: false (optional, default false)
+    - github_enterprise: true (optional, default true for enterprise structure)
+    """
     try:
         # Initialize Temporal client
         temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
@@ -2142,6 +2236,114 @@ async def get_capsule_details(capsule_id: str, db: Session = Depends(get_db)):
         logger.error(f"Failed to get capsule details: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class GitHubExecutionRequest(BaseModel):
+    """Request for end-to-end execution with GitHub push"""
+    description: str
+    github_token: Optional[str] = None
+    repo_name: Optional[str] = None
+    private: bool = False
+    tenant_id: str = "default"
+    user_id: str = "user"
+
+
+@app.post("/generate/complete-with-github")
+async def generate_complete_with_github(request: GitHubExecutionRequest):
+    """
+    Complete end-to-end pipeline: NLP → Code → Capsule → GitHub
+    
+    This is a convenience endpoint that automatically enables GitHub push.
+    """
+    try:
+        # Create request in the format expected by production workflow
+        workflow_request = {
+            "request_id": str(uuid4()),
+            "description": request.description,  # Changed from user_request to description
+            "tenant_id": request.tenant_id,
+            "user_id": request.user_id,
+            "metadata": {
+                "push_to_github": True,
+                "github_token": request.github_token,
+                "github_repo_name": request.repo_name,
+                "github_private": request.private,
+                "github_enterprise": True  # Use enterprise structure
+            }
+        }
+        
+        # Initialize Temporal client
+        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        
+        # Start workflow
+        handle = await temporal_client.start_workflow(
+            "QLPWorkflow",
+            workflow_request,
+            id=f"qlp-github-{workflow_request['request_id']}",
+            task_queue="qlp-main"
+        )
+        
+        # Wait for completion (with timeout)
+        try:
+            workflow_result = await asyncio.wait_for(
+                handle.result(),
+                timeout=300  # 5 minutes timeout
+            )
+            
+            # Extract capsule ID from workflow result
+            capsule_id = workflow_result.get("capsule_id")
+            
+            if capsule_id:
+                # Push to GitHub as a post-workflow step
+                from src.orchestrator.capsule_storage import CapsuleStorageService
+                from src.orchestrator.enhanced_github_integration import EnhancedGitHubIntegration
+                
+                # Get the capsule from storage
+                storage = CapsuleStorageService(next(get_db()))
+                capsule = await storage.get_capsule(capsule_id)
+                
+                if capsule:
+                    # Push to GitHub
+                    github = EnhancedGitHubIntegration(request.github_token)
+                    github_result = await github.push_capsule_atomic(
+                        capsule=capsule,
+                        repo_name=request.repo_name,
+                        private=request.private,
+                        use_intelligent_structure=True
+                    )
+                    
+                    return {
+                        "success": True,
+                        "workflow_id": handle.id,
+                        "capsule_id": capsule_id,
+                        "github_url": github_result["repository_url"],
+                        "files_created": github_result["files_created"],
+                        "execution_time": workflow_result.get("execution_time", 0),
+                        "message": f"Successfully generated code and pushed to GitHub: {github_result['repository_url']}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "workflow_id": handle.id,
+                        "capsule_id": capsule_id,
+                        "message": "Capsule created but not found in storage"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "workflow_id": handle.id,
+                    "message": "Workflow completed but no capsule was created",
+                    "errors": workflow_result.get("errors", [])
+                }
+            
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "workflow_id": handle.id,
+                "message": "Workflow is still running. Check status with /workflow/{workflow_id}/status"
+            }
+            
+    except Exception as e:
+        logger.error(f"Complete pipeline with GitHub failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate/complete-pipeline")
 async def generate_complete_pipeline(request: ExecutionRequest, db: Session = Depends(get_db)):
@@ -3510,7 +3712,8 @@ async def run_worker():
             create_plan_activity,
             execute_task_activity,
             validate_results_activity,
-            create_capsule_activity
+            create_capsule_activity,
+            push_to_github_activity
         ]
     )
     

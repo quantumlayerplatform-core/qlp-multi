@@ -121,7 +121,7 @@ async def get_capsule_from_db(
             "tests": capsule.tests,
             "documentation": capsule.documentation,
             "metadata": capsule.metadata,
-            "created_at": capsule.created_at.isoformat() if capsule.created_at else None
+            "created_at": capsule.created_at if hasattr(capsule, 'created_at') else None
         }
         
     except HTTPException:

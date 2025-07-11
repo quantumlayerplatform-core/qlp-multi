@@ -400,8 +400,15 @@ class ContextBuilder:
     ) -> SharedContext:
         """Create shared context from initial request"""
         
-        # Intelligent language detection from description
-        language = ContextBuilder._detect_language(description, requirements)
+        # Intelligent language detection from description and constraints
+        # Check constraints first for explicit language
+        language = None
+        if constraints and "language" in constraints:
+            language = constraints["language"].lower()
+        
+        # If no constraint, detect from description
+        if not language:
+            language = ContextBuilder._detect_language(description, requirements)
         
         # Intelligent architecture pattern detection
         architecture = ContextBuilder._detect_architecture_pattern(description, requirements)

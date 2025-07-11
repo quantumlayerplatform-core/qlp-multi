@@ -864,7 +864,7 @@ async def request_aitl_review_activity(
             activity.logger.info(f"AITL direct review completed: {aitl_result.get('decision')} (confidence: {aitl_result.get('confidence')})")
             
             return {
-                "approved": aitl_result.get("decision") in ["approved", "approved_with_modifications"],
+                "approved": aitl_result.get("decision") in ["approve", "approved", "approved_with_modifications"],
                 "reviewer": "aitl-system",
                 "confidence": aitl_result.get("confidence", 0),
                 "comments": aitl_result.get("feedback", ""),
@@ -987,6 +987,26 @@ async def create_ql_capsule_activity(
             if isinstance(output, dict):
                 code = output.get("code", output.get("content", ""))
                 actual_language = output.get("language", "python")
+                
+                # If code is actually a stringified dict, parse it
+                if isinstance(code, str) and code.strip().startswith("{") and "'content'" in code:
+                    try:
+                        import ast
+                        parsed_code = ast.literal_eval(code)
+                        if isinstance(parsed_code, dict):
+                            code = parsed_code.get('content', code)
+                            actual_language = parsed_code.get('language', actual_language)
+                    except:
+                        pass
+                
+                # Clean up markdown code blocks if present
+                if isinstance(code, str) and code.strip().startswith("```"):
+                    lines = code.strip().split('\n')
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]  # Remove first line
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]  # Remove last line
+                    code = '\n'.join(lines)
                 
                 activity.logger.info(f"DEBUG: Processing task {i}: actual_language={actual_language}, preferred={preferred_language}, code_length={len(code) if code else 0}")
                 
@@ -2049,24 +2069,35 @@ async def _generate_tests_first(client, task: Dict[str, Any], tier: str, request
     from ..common.config import settings
     activity.logger.info(f"Generating tests for task {task['task_id']}")
     
+    # Get language from task metadata/context
+    language = task.get("meta", {}).get("preferred_language", "python")
+    if not language:
+        language = task.get("metadata", {}).get("language_constraint", "python")
+    if not language:
+        language = task.get("context", {}).get("preferred_language", "python")
+    
+    activity.logger.info(f"TDD test generation: Using language {language}")
+    
     # Create test generation task
     test_task = {
         "id": f"{task['task_id']}-tests",
         "type": "test_generation",
-        "description": f"""Generate comprehensive test suite for: {task['description']}
+        "description": f"""Generate comprehensive test suite in {language.upper()} for: {task['description']}
         
         Requirements:
         1. Cover all happy paths and edge cases
         2. Test error handling and boundary conditions
-        3. Use pytest with clear test names
+        3. Use {language} testing framework (pytest for Python, jest for JavaScript, etc.)
         4. Include fixtures and mocks if needed
         5. Ensure tests are independent and deterministic
         6. Generate production-ready tests that catch bugs
         
+        CRITICAL: Generate test code in {language.upper()} language only.
         Generate ONLY the test code, not implementation code.""",
         "complexity": task.get("complexity", "medium"),
         "status": "pending",
-        "metadata": {**task.get("metadata", {}), "tdd_phase": "test_generation"}
+        "metadata": {**task.get("metadata", {}), "tdd_phase": "test_generation", "language_constraint": language},
+        "meta": {**task.get("meta", {}), "preferred_language": language}
     }
     
     # Execute test generation
@@ -2104,30 +2135,41 @@ async def _generate_code_for_tests(
     if not tests_code:
         tests_code = str(test_result.get("output", ""))
     
+    # Get language from task metadata/context
+    language = task.get("meta", {}).get("preferred_language", "python")
+    if not language:
+        language = task.get("metadata", {}).get("language_constraint", "python")
+    if not language:
+        language = task.get("context", {}).get("preferred_language", "python")
+    
+    activity.logger.info(f"TDD code generation: Using language {language}")
+    
     # Create code generation task
     code_task = {
         "id": f"{task['task_id']}-implementation",
         "type": "tdd_implementation",
-        "description": f"""Generate code that passes the following test suite:
+        "description": f"""Generate {language.upper()} code that passes the following test suite:
         
         Original Task: {task['description']}
         
         Test Suite:
-        ```python
+        ```{language}
         {tests_code}
         ```
         
         Requirements:
         1. Code must pass ALL tests without modification
         2. Be production-ready with proper error handling
-        3. Follow best practices and design patterns
+        3. Follow {language} best practices and design patterns
         4. Be efficient and maintainable
-        5. Include necessary imports and dependencies
+        5. Include necessary {language} imports and dependencies
         
+        CRITICAL: Generate implementation code in {language.upper()} language only.
         Generate ONLY the implementation code, not the tests.""",
         "complexity": task.get("complexity", "medium"),
         "status": "pending",
-        "metadata": {**task.get("metadata", {}), "tdd_phase": "code_generation"}
+        "metadata": {**task.get("metadata", {}), "tdd_phase": "code_generation", "language_constraint": language},
+        "meta": {**task.get("meta", {}), "preferred_language": language}
     }
     
     # Execute code generation
@@ -2175,11 +2217,20 @@ async def _verify_and_refine_tdd(
     # TODO: Execute tests against code in sandbox
     # For now, combine results and return
     
+    # Get language from task metadata/context
+    language = task.get("meta", {}).get("preferred_language", "python")
+    if not language:
+        language = task.get("metadata", {}).get("language_constraint", "python")
+    if not language:
+        language = task.get("context", {}).get("preferred_language", "python")
+    
+    activity.logger.info(f"TDD: Using language {language} from task metadata")
+    
     # Combine tests and implementation
     combined_output = {
         "code": implementation_code,
         "tests": tests_code,
-        "language": code_result.get("output", {}).get("language", "python"),
+        "language": language,  # Use language from task metadata
         "documentation": f"Test-driven implementation for: {task['description']}"
     }
     

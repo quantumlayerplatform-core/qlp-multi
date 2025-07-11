@@ -250,6 +250,11 @@ services:
       POSTGRES_DB: qlp_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      AGENT_FACTORY_URL: http://agent-factory:8001
+      VALIDATION_MESH_URL: http://validation-mesh:8002
+      VECTOR_MEMORY_URL: http://vector-memory:8003
+      SANDBOX_SERVICE_URL: http://execution-sandbox:8004
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}

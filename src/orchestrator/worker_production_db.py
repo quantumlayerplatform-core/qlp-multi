@@ -20,18 +20,15 @@ from src.orchestrator.worker_production import (
     select_agent_tier_activity,
     execute_task_activity,
     validate_result_activity,
-    test_in_sandbox_activity,
-    hitl_review_activity,
-    aitl_review_activity,
-    prepare_delivery_activity,
-    # We'll override create_ql_capsule_activity with the DB version
+    execute_in_sandbox_activity,
+    request_aitl_review_activity,
+    llm_clean_code_activity,
+    create_ql_capsule_activity,  # Import the original activity
+    prepare_delivery_activity,  # Import the delivery preparation activity
 )
 
-# Import the database-enabled capsule activity with proper name
+# Import the database-enabled capsule activity as well
 from src.orchestrator.activities.capsule_activities import create_ql_capsule_activity_with_db
-
-# Alias for workflow compatibility
-create_ql_capsule_activity = create_ql_capsule_activity_with_db
 
 # Configure logging
 logging.basicConfig(
@@ -47,7 +44,7 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
     # Connect to Temporal
     client = await Client.connect(temporal_host)
     
-    # Create worker with all activities including database-enabled capsule creation
+    # Create worker with all activities including both capsule creation versions
     worker = Worker(
         client,
         task_queue=task_queue,
@@ -57,11 +54,12 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
             select_agent_tier_activity,
             execute_task_activity,
             validate_result_activity,
-            test_in_sandbox_activity,
-            hitl_review_activity,
-            create_ql_capsule_activity,  # Database-enabled version (aliased above)
-            aitl_review_activity,
-            prepare_delivery_activity
+            execute_in_sandbox_activity,
+            request_aitl_review_activity,
+            llm_clean_code_activity,
+            create_ql_capsule_activity,  # Original activity from worker_production
+            create_ql_capsule_activity_with_db,  # Database-enabled version
+            prepare_delivery_activity,  # Delivery preparation activity
         ],
     )
     

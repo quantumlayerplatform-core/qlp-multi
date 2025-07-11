@@ -227,10 +227,38 @@ Requirements:
             
             code_content = response['content']
             
+            # Extract language from task requirements or context
+            language = "python"  # Default
+            
+            # Check if language is specified in context requirements
+            if 'requirements' in context:
+                req = context['requirements']
+                if isinstance(req, dict):
+                    language = req.get('language', 'python')
+                    # Also check for programming_language key
+                    language = req.get('programming_language', language)
+            
+            # Check task description for language specification
+            task_desc_lower = task.description.lower()
+            if '**python**' in task_desc_lower or 'must be in python' in task_desc_lower:
+                language = 'python'
+            elif '**javascript**' in task_desc_lower or 'must be in javascript' in task_desc_lower:
+                language = 'javascript'
+            elif '**java**' in task_desc_lower or 'must be in java' in task_desc_lower:
+                language = 'java'
+            elif '**go**' in task_desc_lower or 'must be in go' in task_desc_lower:
+                language = 'go'
+            elif '**rust**' in task_desc_lower or 'must be in rust' in task_desc_lower:
+                language = 'rust'
+            
+            # Fallback to detection if no explicit language specified
+            if language == 'python' and 'python' not in task_desc_lower:
+                language = self._detect_language(code_content)
+            
             # Structure the output
             output = {
                 "code": code_content,
-                "language": self._detect_language(code_content),
+                "language": language,
                 "features_implemented": self._extract_features(code_content),
                 "dependencies": self._extract_dependencies(code_content)
             }
@@ -268,18 +296,38 @@ Requirements:
     
     def _detect_language(self, code: str) -> str:
         """Detect programming language from code"""
-        if "import " in code and "def " in code:
+        # Count Python-specific patterns
+        python_score = 0
+        python_patterns = ['def ', 'import ', 'from ', 'class ', '__init__', 'self.', 'print(', 
+                          'if __name__', ':', 'elif ', 'except ', 'async def', 'await ']
+        for pattern in python_patterns:
+            if pattern in code:
+                python_score += 1
+        
+        # Count JavaScript-specific patterns  
+        js_score = 0
+        js_patterns = ['const ', 'let ', 'var ', '=>', 'console.', 'function(', 'require(',
+                      'module.exports', 'export ', 'import {', '})', ');']
+        for pattern in js_patterns:
+            if pattern in code:
+                js_score += 1
+        
+        # If Python score is higher or equal, prefer Python
+        if python_score >= js_score and python_score > 0:
             return "python"
-        elif "const " in code or "function " in code or "=>" in code:
+        elif js_score > python_score:
             return "javascript"
-        elif "func " in code and "package " in code:
+        
+        # Other language checks
+        if 'package main' in code or ('func ' in code and 'package ' in code):
             return "go"
-        elif "fn " in code and "let " in code:
+        elif ('fn main' in code) or ('fn ' in code and 'let mut' in code):
             return "rust"
-        elif "public class" in code or "public static" in code:
+        elif 'public class' in code or 'public static void main' in code:
             return "java"
-        else:
-            return "unknown"
+        
+        # Default to python for this use case
+        return "python"
     
     def _extract_features(self, code: str) -> List[str]:
         """Extract implemented features from code"""

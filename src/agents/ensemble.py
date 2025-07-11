@@ -808,8 +808,8 @@ class EnsembleOrchestrator:
         # Adjust confidence based on validation
         final_confidence = min(0.99, confidence + validation_results["confidence_boost"])
         
-        # Determine language
-        language = "python" if "def " in code or "import " in code else "javascript"
+        # Intelligently determine language
+        language = self._detect_language_from_code(code)
         
         try:
             # Use validation mesh for additional checks
@@ -989,6 +989,92 @@ class ProductionCodeGenerator:
             return "medium"
         else:
             return "simple"
+    
+    def _detect_language_from_code(self, code: str) -> str:
+        """Intelligently detect programming language from code"""
+        import re
+        
+        # Language-specific patterns with priorities
+        patterns = {
+            "python": [
+                (r'^\s*def\s+\w+\s*\(', 10),
+                (r'^\s*class\s+\w+', 10),
+                (r'^\s*import\s+\w+', 8),
+                (r'^\s*from\s+\w+\s+import', 8),
+                (r'if\s+__name__\s*==', 10),
+                (r':\s*$', 3),
+                (r'self\.', 7),
+            ],
+            "javascript": [
+                (r'function\s+\w+\s*\(', 10),
+                (r'const\s+\w+\s*=', 8),
+                (r'let\s+\w+\s*=', 8),
+                (r'=>', 8),
+                (r'console\.log', 7),
+                (r'require\(', 8),
+                (r'module\.exports', 8),
+            ],
+            "typescript": [
+                (r'interface\s+\w+', 10),
+                (r'type\s+\w+\s*=', 10),
+                (r':\s*string|:\s*number|:\s*boolean', 8),
+                (r'export\s+class', 8),
+            ],
+            "java": [
+                (r'public\s+class', 10),
+                (r'public\s+static\s+void\s+main', 10),
+                (r'import\s+java\.', 9),
+                (r'System\.out\.println', 8),
+            ],
+            "go": [
+                (r'package\s+\w+', 10),
+                (r'func\s+\w+\s*\(', 10),
+                (r'import\s+\(', 8),
+                (r':=', 9),
+            ],
+            "rust": [
+                (r'fn\s+\w+\s*\(', 10),
+                (r'let\s+mut\s+', 9),
+                (r'impl\s+', 8),
+                (r'use\s+\w+::', 8),
+            ],
+            "cpp": [
+                (r'#include\s*<', 10),
+                (r'using\s+namespace', 9),
+                (r'int\s+main\s*\(', 10),
+                (r'std::', 7),
+            ],
+        }
+        
+        scores = {}
+        for lang, lang_patterns in patterns.items():
+            score = 0
+            for pattern, weight in lang_patterns:
+                if re.search(pattern, code, re.MULTILINE):
+                    score += weight
+            scores[lang] = score
+        
+        # Return language with highest score
+        if scores:
+            best_lang = max(scores, key=scores.get)
+            if scores[best_lang] > 5:  # Minimum confidence
+                return best_lang
+        
+        # Fallback to keyword analysis
+        code_lower = code.lower()
+        if "console.log" in code_lower or "require(" in code_lower:
+            return "javascript"
+        elif "print(" in code_lower or "__init__" in code_lower:
+            return "python"
+        elif "system.out.println" in code_lower:
+            return "java"
+        elif "fmt.print" in code_lower:
+            return "go"
+        elif "println!" in code_lower:
+            return "rust"
+        
+        # Default to python for ML/data science context
+        return "python"
 
 
 # Export main interface

@@ -13,8 +13,9 @@ import asyncio
 import structlog
 
 from src.common.models import QLCapsule, ExecutionRequest
-from src.agents.base_agents import BaseAgent, AgentType
-from src.agents.llm_client import LLMClient, LLMProvider
+from src.agents.base_agents import Agent
+from src.common.models import AgentTier
+from src.agents.azure_llm_client import llm_client, LLMProvider
 
 logger = structlog.get_logger()
 
@@ -59,17 +60,17 @@ class CapsuleCritique:
     metadata: Dict[str, Any]
 
 
-class CapsuleCriticAgent(BaseAgent):
+class CapsuleCriticAgent(Agent):
     """Agent that critically evaluates capsule quality"""
     
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, agent_id: str = "capsule-critic", llm_client_instance=None):
         super().__init__(
-            agent_type=AgentType.SPECIALIST,
-            tier="T2",
-            name="CapsuleCritic",
-            capabilities=["critique", "evaluation", "quality_assessment"],
-            llm_client=llm_client
+            agent_id=agent_id,
+            tier=AgentTier.T2
         )
+        self.name = "CapsuleCritic"
+        self.capabilities = ["critique", "evaluation", "quality_assessment"]
+        self.llm_client_instance = llm_client_instance or llm_client
         
         # Scoring weights for overall usefulness
         self.dimension_weights = {
@@ -84,6 +85,21 @@ class CapsuleCriticAgent(BaseAgent):
             CriticDimension.SECURITY: 0.03,            # Context dependent
             CriticDimension.DOCUMENTATION: 0.02        # Nice to have
         }
+    
+    async def _query_llm(self, prompt: str) -> str:
+        """Query the LLM for analysis"""
+        try:
+            # Use the azure_llm_client's query method
+            response = await self.llm_client_instance.query(
+                prompt=prompt,
+                model="gpt-4",  # Use GPT-4 for better critique quality
+                max_tokens=1000,
+                temperature=0.3  # Lower temperature for more consistent analysis
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error querying LLM: {str(e)}")
+            return "Unable to generate analysis due to LLM error."
     
     async def critique_capsule(
         self,
