@@ -102,7 +102,11 @@ class UnifiedOptimizationEngine:
         
         # Step 3: Select optimal patterns
         selected_patterns = [rec.pattern for rec in pattern_recommendations[:3]]
-        pattern_confidence = sum(rec.confidence for rec in pattern_recommendations[:3]) / len(pattern_recommendations[:3])
+        # Avoid division by zero if no patterns recommended
+        if pattern_recommendations:
+            pattern_confidence = sum(rec.confidence for rec in pattern_recommendations[:3]) / min(len(pattern_recommendations), 3)
+        else:
+            pattern_confidence = 0.0
         
         # Step 4: Determine optimal evolution strategy
         evolution_strategy = self._select_evolution_strategy(selected_patterns, characteristics)
