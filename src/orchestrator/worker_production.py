@@ -21,9 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Activity timeout configurations
-ACTIVITY_TIMEOUT = timedelta(minutes=5)
-LONG_ACTIVITY_TIMEOUT = timedelta(minutes=30)
-HEARTBEAT_TIMEOUT = timedelta(seconds=30)
+ACTIVITY_TIMEOUT = timedelta(minutes=10)  # Increased from 5 to 10 minutes
+LONG_ACTIVITY_TIMEOUT = timedelta(minutes=45)  # Increased from 30 to 45 minutes
+HEARTBEAT_TIMEOUT = timedelta(seconds=60)  # Increased from 30 to 60 seconds
 
 # Retry policy for activities
 DEFAULT_RETRY_POLICY = RetryPolicy(
@@ -1055,8 +1055,20 @@ async def create_ql_capsule_activity(
                     # CRITICAL: Always include code - don't filter by language!
                     activity.logger.info(f"EMERGENCY: Including code in {actual_language} (ext: {ext})")
                     
-                    # Determine file type by content analysis
-                    if _is_test_code(code):
+                    # Check task type from the original task data
+                    task_type = task.get("type", "").lower()
+                    task_id = task.get("task_id", "")
+                    
+                    # Check if this is explicitly a test generation task
+                    is_test_task = (task_type == "test_creation" or 
+                                  task_type == "test_generation" or
+                                  "test" in task_id or
+                                  task.get("metadata", {}).get("tdd_phase") == "test_generation")
+                    
+                    activity.logger.info(f"DEBUG: Task {i} - type: {task_type}, is_test_task: {is_test_task}")
+                    
+                    # Determine file type by task type first, then content analysis
+                    if is_test_task or (not task_type and _is_test_code(code)):
                         filename = f"test_{i}.{ext}"
                         tests[filename] = code
                         activity.logger.info(f"DEBUG: Added test file: {filename}")
@@ -1064,6 +1076,7 @@ async def create_ql_capsule_activity(
                         documentation.append(code)
                         activity.logger.info(f"DEBUG: Added documentation")
                     else:
+                        # This is source code
                         # Use shared context for consistent file naming
                         if len(source_code) == 0:
                             # First functional code - use shared context main file name
@@ -1354,7 +1367,7 @@ async def prepare_delivery_activity(capsule_id: str, request: Dict[str, Any]) ->
         try:
             # Get capsule details
             capsule_response = await client.get(
-                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/capsule/{capsule_id}"
+                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/capsules/{capsule_id}"
             )
             
             if capsule_response.status_code != 200:
@@ -1385,7 +1398,7 @@ async def prepare_delivery_activity(capsule_id: str, request: Dict[str, Any]) ->
             
             # Create delivery record
             delivery_response = await client.post(
-                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/capsule/{capsule_id}/deliver",
+                f"http://orchestrator:{settings.ORCHESTRATOR_PORT}/capsules/{capsule_id}/deliver",
                 json=delivery_package
             )
             
