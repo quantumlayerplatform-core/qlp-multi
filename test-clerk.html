@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>QLP - Get Clerk Token</title>
+    <script src="https://knowing-pigeon-89.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .token-display {
+            word-break: break-all;
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .instruction {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .code {
+            background: #f8f9fa;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔐 QLP Clerk Token Generator</h1>
+    
+    <div id="sign-in"></div>
+    
+    <div id="user-info" style="display:none">
+        <h2>👤 Signed in as: <span id="user-email"></span></h2>
+        <p>User ID: <span id="user-id" class="code"></span></p>
+        
+        <button id="get-token">Get Authentication Token</button>
+        <button id="sign-out">Sign Out</button>
+        
+        <div id="token-section" style="display:none">
+            <h3>🎫 Your Token:</h3>
+            <div class="token-display" id="token"></div>
+            
+            <div class="instruction">
+                <h3>📋 How to use this token:</h3>
+                
+                <h4>1. Test with curl:</h4>
+                <pre id="curl-example"></pre>
+                
+                <h4>2. Test with Python script:</h4>
+                <pre id="python-example"></pre>
+                
+                <h4>3. In your application:</h4>
+                <pre>headers = {
+    "Authorization": "Bearer YOUR_TOKEN_HERE"
+}</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const clerkPublishableKey = 'pk_test_a25vd24tcGlnZW9uLTg5LmNsZXJrLmFjY291bnRzLmRldiQ';
+        
+        const clerk = new Clerk(clerkPublishableKey);
+        
+        async function init() {
+            await clerk.load();
+            
+            if (clerk.user) {
+                showUserInfo();
+            } else {
+                clerk.mountSignIn(document.getElementById('sign-in'));
+            }
+        }
+        
+        function showUserInfo() {
+            document.getElementById('sign-in').style.display = 'none';
+            document.getElementById('user-info').style.display = 'block';
+            document.getElementById('user-email').textContent = clerk.user.primaryEmailAddress?.emailAddress || 'N/A';
+            document.getElementById('user-id').textContent = clerk.user.id;
+        }
+        
+        document.getElementById('get-token').addEventListener('click', async () => {
+            try {
+                const token = await clerk.session.getToken();
+                
+                // Display token
+                document.getElementById('token').textContent = token;
+                document.getElementById('token-section').style.display = 'block';
+                
+                // Show curl example
+                document.getElementById('curl-example').textContent = 
+`curl -H "Authorization: Bearer ${token}" \\
+     "http://localhost:8000/api/v2/costs?period_days=7"`;
+                
+                // Show Python example
+                document.getElementById('python-example').textContent = 
+`python test_cost_with_clerk.py --token "${token}"`;
+                
+                // Also log to console
+                console.log('Token:', token);
+                console.log('User metadata:', clerk.user.publicMetadata);
+                
+                // Test the token
+                testToken(token);
+                
+            } catch (error) {
+                alert('Error getting token: ' + error.message);
+            }
+        });
+        
+        document.getElementById('sign-out').addEventListener('click', () => {
+            clerk.signOut().then(() => {
+                location.reload();
+            });
+        });
+        
+        clerk.addListener(() => {
+            if (clerk.user) {
+                showUserInfo();
+            }
+        });
+        
+        async function testToken(token) {
+            console.log('Testing token with cost estimation endpoint...');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v2/costs/estimate?complexity=medium&tech_stack=Python', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (response.ok) {
+                    console.log('✅ Token is valid! Cost estimation response:', await response.json());
+                } else {
+                    console.log('❌ Token test failed:', response.status, await response.text());
+                }
+            } catch (error) {
+                console.log('❌ Error testing token:', error);
+            }
+        }
+        
+        // Initialize
+        init();
+    </script>
+</body>
+</html>
