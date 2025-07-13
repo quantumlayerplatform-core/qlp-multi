@@ -25,8 +25,12 @@ from tenacity import (
 
 from src.common.config import settings
 from src.agents.azure_llm_optimized import optimized_azure_client
+from src.common.cost_calculator_persistent import track_llm_cost
 
 logger = structlog.get_logger()
+
+# Debug log to confirm cost tracking is imported
+logger.info("Azure LLM Client: Cost tracking imported successfully")
 
 # Azure deployment name mapping
 # Maps OpenAI model names to Azure deployment names
@@ -155,6 +159,11 @@ class LLMClient:
         max_tokens: int = 2000,
         timeout: float = 30.0,
         use_optimized: bool = True,
+        workflow_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -185,14 +194,51 @@ class LLMClient:
             provider == LLMProvider.AZURE_OPENAI and 
             hasattr(optimized_azure_client, 'chat_completion')):
             try:
+                # Don't pass cost tracking params to optimized client
+                optimized_kwargs = {k: v for k, v in kwargs.items() 
+                                  if k not in ['workflow_id', 'tenant_id', 'user_id', 'task_id', 'metadata']}
                 result = await optimized_azure_client.chat_completion(
                     messages=messages,
                     model=model,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    **kwargs
+                    **optimized_kwargs
                 )
                 self.metrics["total_latency"] += time.time() - start_time
+                
+                # Track cost for optimized client too
+                if "usage" in result and result["usage"]:
+                    usage = result["usage"]
+                    logger.info(
+                        "Creating cost tracking task (optimized path)",
+                        model=result.get("model", model),
+                        provider=provider.value,
+                        workflow_id=workflow_id,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0)
+                    )
+                    cost_task = asyncio.create_task(
+                        track_llm_cost(
+                            model=result.get("model", model),
+                            provider=provider.value,
+                            prompt_tokens=usage.get("prompt_tokens", 0),
+                            completion_tokens=usage.get("completion_tokens", 0),
+                            workflow_id=workflow_id,
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            task_id=task_id,
+                            metadata=metadata or {},
+                            latency_ms=int((time.time() - start_time) * 1000)
+                        ),
+                        name=f"track_cost_{workflow_id}_{task_id}"
+                    )
+                    def handle_cost_error(task):
+                        try:
+                            task.result()
+                        except Exception as e:
+                            logger.error(f"Cost tracking failed: {e}")
+                    cost_task.add_done_callback(handle_cost_error)
+                
                 return result
             except Exception as e:
                 logger.warning(f"Optimized client failed, falling back: {e}")
@@ -212,6 +258,10 @@ class LLMClient:
                         model = deployment_name
                 
                     # OpenAI-compatible API with retry
+                    # Filter out cost tracking params that OpenAI doesn't accept
+                    openai_kwargs = {k: v for k, v in kwargs.items() 
+                                   if k not in ['workflow_id', 'tenant_id', 'user_id', 'task_id', 'metadata']}
+                    
                     response = await self._make_request_with_retry(
                         client=client,
                         provider=provider,
@@ -220,24 +270,73 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         timeout=timeout,
-                        **kwargs
+                        **openai_kwargs
                     )
+                    
+                    # Track cost asynchronously
+                    usage = response.usage if response.usage else None
+                    cost_data = {}
+                    if usage:
+                        logger.info(
+                            "Creating cost tracking task",
+                            model=response.model,
+                            provider=provider.value,
+                            workflow_id=workflow_id,
+                            prompt_tokens=usage.prompt_tokens,
+                            completion_tokens=usage.completion_tokens
+                        )
+                        # Create the task with a name for debugging
+                        cost_task = asyncio.create_task(
+                            track_llm_cost(
+                                model=response.model,
+                                provider=provider.value,
+                                prompt_tokens=usage.prompt_tokens,
+                                completion_tokens=usage.completion_tokens,
+                                workflow_id=workflow_id,
+                                tenant_id=tenant_id,
+                                user_id=user_id,
+                                task_id=task_id,
+                                metadata=metadata or {},
+                                latency_ms=int((time.time() - start_time) * 1000)
+                            ),
+                            name=f"track_cost_{workflow_id}_{task_id}"
+                        )
+                        # Add error handler to prevent unhandled exceptions
+                        def handle_cost_error(task):
+                            try:
+                                task.result()
+                            except Exception as e:
+                                logger.error(f"Cost tracking failed: {e}")
+                        cost_task.add_done_callback(handle_cost_error)
+                        
+                        # For immediate response, calculate cost synchronously
+                        cost_data = {
+                            "input_cost_usd": usage.prompt_tokens * 0.00001,  # Approximate
+                            "output_cost_usd": usage.completion_tokens * 0.00003,
+                            "total_cost_usd": (usage.prompt_tokens * 0.00001) + (usage.completion_tokens * 0.00003),
+                            "async_tracking": True
+                        }
                     
                     return {
                         "content": response.choices[0].message.content,
                         "usage": {
-                            "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                            "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                            "total_tokens": response.usage.total_tokens if response.usage else 0
+                            "prompt_tokens": usage.prompt_tokens if usage else 0,
+                            "completion_tokens": usage.completion_tokens if usage else 0,
+                            "total_tokens": usage.total_tokens if usage else 0
                         },
                         "model": response.model,
                         "provider": provider.value,
                         "finish_reason": response.choices[0].finish_reason,
-                        "latency": time.time() - start_time
+                        "latency": time.time() - start_time,
+                        "cost": cost_data
                     }
                     
                 elif provider == LLMProvider.ANTHROPIC:
                     # Anthropic API with retry
+                    # Filter out cost tracking params that Anthropic doesn't accept
+                    anthropic_kwargs = {k: v for k, v in kwargs.items() 
+                                      if k not in ['workflow_id', 'tenant_id', 'user_id', 'task_id', 'metadata']}
+                    
                     response = await self._make_request_with_retry(
                         client=client,
                         provider=provider,
@@ -245,8 +344,40 @@ class LLMClient:
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        **kwargs
+                        **anthropic_kwargs
                     )
+                    
+                    # Track cost asynchronously
+                    cost_task = asyncio.create_task(
+                        track_llm_cost(
+                            model=response.model,
+                            provider=provider.value,
+                            prompt_tokens=response.usage.input_tokens,
+                            completion_tokens=response.usage.output_tokens,
+                            workflow_id=workflow_id,
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            task_id=task_id,
+                            metadata=metadata or {},
+                            latency_ms=int((time.time() - start_time) * 1000)
+                        ),
+                        name=f"track_cost_{workflow_id}_{task_id}"
+                    )
+                    # Add error handler
+                    def handle_cost_error(task):
+                        try:
+                            task.result()
+                        except Exception as e:
+                            logger.error(f"Cost tracking failed: {e}")
+                    cost_task.add_done_callback(handle_cost_error)
+                    
+                    # For immediate response, calculate cost synchronously
+                    cost_data = {
+                        "input_cost_usd": response.usage.input_tokens * 0.00003,  # Approximate for Claude
+                        "output_cost_usd": response.usage.output_tokens * 0.00015,
+                        "total_cost_usd": (response.usage.input_tokens * 0.00003) + (response.usage.output_tokens * 0.00015),
+                        "async_tracking": True
+                    }
                     
                     return {
                         "content": response.content[0].text,
@@ -258,7 +389,8 @@ class LLMClient:
                         "model": response.model,
                         "provider": provider.value,
                         "finish_reason": response.stop_reason,
-                        "latency": time.time() - start_time
+                        "latency": time.time() - start_time,
+                        "cost": cost_data
                     }
                 
             except Exception as e:
@@ -307,13 +439,34 @@ class LLMClient:
             if self.metrics["requests"] > 0 else 0
         )
         
+        # Import cost calculator to get cost metrics
+        from src.common.cost_calculator import cost_calculator
+        
         return {
             "total_requests": self.metrics["requests"],
             "total_errors": self.metrics["errors"],
             "total_retries": self.metrics["retries"],
             "average_latency": avg_latency,
-            "error_rate": self.metrics["errors"] / max(self.metrics["requests"], 1)
+            "error_rate": self.metrics["errors"] / max(self.metrics["requests"], 1),
+            "total_cost_usd": float(cost_calculator.total_cost),
+            "cost_breakdown": {
+                "total_usage_count": len(cost_calculator.usage_history),
+                "by_provider": self._get_cost_by_provider()
+            }
         }
+    
+    def _get_cost_by_provider(self) -> Dict[str, float]:
+        """Get cost breakdown by provider"""
+        from src.common.cost_calculator import cost_calculator
+        
+        provider_costs = {}
+        for usage in cost_calculator.usage_history:
+            provider = usage.get("provider", "unknown")
+            if provider not in provider_costs:
+                provider_costs[provider] = 0.0
+            provider_costs[provider] += usage.get("total_cost_usd", 0)
+        
+        return provider_costs
     
     @property
     def azure_endpoint(self) -> Optional[str]:

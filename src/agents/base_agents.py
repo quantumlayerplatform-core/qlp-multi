@@ -231,7 +231,16 @@ class T0Agent(Agent):
                     provider=provider,
                     temperature=0.3,
                     max_tokens=2000,
-                    timeout=30.0
+                    timeout=30.0,
+                    # Add cost tracking context
+                    workflow_id=context.get("request_id"),
+                    tenant_id=context.get("tenant_id"),
+                    user_id=context.get("user_id"),
+                    metadata={
+                        "task_id": task.id,
+                        "task_type": task.type,
+                        "agent_tier": "T0"
+                    }
                 )
             except (ConnectionError, TimeoutError) as e:
                 # These are retryable errors
@@ -436,7 +445,16 @@ class T1Agent(Agent):
                 provider=provider,
                 temperature=0.3,
                 max_tokens=4000,
-                timeout=30.0
+                timeout=30.0,
+                # Add cost tracking context
+                workflow_id=context.get("request_id"),
+                tenant_id=context.get("tenant_id"),
+                user_id=context.get("user_id"),
+                metadata={
+                    "task_id": task.id,
+                    "task_type": task.type,
+                    "agent_tier": "T1"
+                }
             )
             
             output = response["content"]

@@ -371,6 +371,12 @@ async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str, sh
         preferred_language = task.get("meta", {}).get("preferred_language", "python")
         context["preferred_language"] = preferred_language
         
+        # Add cost tracking context
+        context["workflow_id"] = request_id  # Use request_id as workflow_id
+        context["tenant_id"] = shared_context_dict.get("tenant_id", "default")
+        context["user_id"] = shared_context_dict.get("user_id")
+        context["request_id"] = request_id
+        
         execution_input = {
             "task": {
                 "id": task.get("task_id", task.get("id", "")),

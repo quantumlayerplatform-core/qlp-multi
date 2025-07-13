@@ -115,6 +115,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL}
     ports:
       - "8000:8000"
     depends_on:
@@ -143,6 +146,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
       VECTOR_MEMORY_URL: http://vector-memory:8003
       VALIDATION_MESH_URL: http://validation-mesh:8002
       EXECUTION_SANDBOX_URL: http://execution-sandbox:8004
@@ -153,6 +157,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL}
     ports:
       - "8001:8001"
     depends_on:
@@ -262,6 +269,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL}
     depends_on:
       temporal:
         condition: service_healthy
