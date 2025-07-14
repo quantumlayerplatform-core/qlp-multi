@@ -202,6 +202,16 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:3001"
     )
     
+    # Social Media API Keys (for marketing auto-publish)
+    TWITTER_API_KEY: Optional[str] = None
+    TWITTER_API_SECRET: Optional[str] = None
+    TWITTER_ACCESS_TOKEN: Optional[str] = None
+    TWITTER_ACCESS_SECRET: Optional[str] = None
+    TWITTER_BEARER_TOKEN: Optional[str] = None
+    
+    LINKEDIN_EMAIL: Optional[str] = None
+    LINKEDIN_PASSWORD: Optional[str] = None
+    
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins from comma-separated string"""

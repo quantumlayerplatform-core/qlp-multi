@@ -1442,6 +1442,74 @@ async def get_marketing_workflow_status(
         logger.error("Failed to get workflow status", error=str(e))
         raise HTTPException(status_code=404, detail=f"Workflow not found: {str(e)}")
 
+
+@app.post("/api/v2/marketing/campaigns/{campaign_id}/publisher/start")
+async def start_scheduled_publisher(
+    campaign_id: str,
+    check_interval_minutes: int = 60,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Start scheduled publisher for a campaign"""
+    try:
+        from src.orchestrator.scheduled_publisher_workflow import (
+            ScheduledPublishRequest,
+            ScheduledPublisherWorkflow
+        )
+        
+        request = ScheduledPublishRequest(
+            campaign_id=campaign_id,
+            check_interval_minutes=check_interval_minutes
+        )
+        
+        workflow_id = f"publisher-{campaign_id}"
+        
+        # Start the workflow
+        handle = await temporal_client.start_workflow(
+            ScheduledPublisherWorkflow.run,
+            request,
+            id=workflow_id,
+            task_queue="publisher-queue"
+        )
+        
+        return {
+            "workflow_id": workflow_id,
+            "status": "started",
+            "campaign_id": campaign_id,
+            "check_interval_minutes": check_interval_minutes,
+            "message": "Scheduled publisher started successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start scheduled publisher: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v2/marketing/campaigns/{campaign_id}/publisher/stop")
+async def stop_scheduled_publisher(
+    campaign_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Stop scheduled publisher for a campaign"""
+    try:
+        workflow_id = f"publisher-{campaign_id}"
+        handle = temporal_client.get_workflow_handle(workflow_id)
+        
+        # Cancel the workflow
+        await handle.cancel()
+        
+        return {
+            "workflow_id": workflow_id,
+            "status": "cancelled",
+            "campaign_id": campaign_id,
+            "message": "Scheduled publisher stopped successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to stop scheduled publisher: {e}")
+        raise HTTPException(status_code=404, detail=f"Publisher not found: {str(e)}")
+
 @app.post("/execute", response_model=Dict[str, str])
 async def execute_request(request: ExecutionRequest):
     """
@@ -1588,7 +1656,9 @@ async def test_marketing_no_auth(
             unique_value_prop=request['unique_value_prop'],
             duration_days=request['duration_days'],
             channels=request['channels'],
-            tone_preferences=request['tone_preferences']
+            tone_preferences=request['tone_preferences'],
+            auto_publish=request.get('auto_publish', False),
+            publish_immediately=request.get('publish_immediately', False)
         )
         
         workflow_id = f"marketing-campaign-{workflow_request.request_id}"

@@ -50,6 +50,8 @@ class MarketingWorkflowRequest:
     tone_preferences: List[str]  # technical, visionary, etc.
     launch_date: Optional[str] = None
     constraints: Optional[str] = None
+    auto_publish: bool = False  # Whether to auto-publish content
+    publish_immediately: bool = False  # Publish as soon as generated
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -384,6 +386,81 @@ async def create_marketing_capsule(
         raise
 
 
+@activity.defn
+async def publish_content_piece(
+    content_piece: ContentPiece,
+    immediate: bool = False
+) -> Dict[str, Any]:
+    """Publish a single content piece to its platform"""
+    from src.agents.marketing.social_publisher import social_publisher, PublishStatus
+    
+    activity.logger.info(
+        f"Publishing {content_piece.type} to {content_piece.channel}",
+        immediate=immediate
+    )
+    
+    try:
+        # Check if we should publish immediately or wait for scheduled time
+        if not immediate and content_piece.scheduled_time:
+            scheduled_dt = datetime.fromisoformat(content_piece.scheduled_time.replace('Z', '+00:00'))
+            now = datetime.now(timezone.utc)
+            
+            if scheduled_dt > now:
+                # Not time yet
+                return {
+                    "content_id": content_piece.content_id,
+                    "status": "scheduled",
+                    "scheduled_for": content_piece.scheduled_time,
+                    "message": "Content scheduled for future publication"
+                }
+        
+        # Publish the content
+        result = await social_publisher.publish_content(content_piece)
+        
+        return {
+            "content_id": result.content_id,
+            "status": result.status.value,
+            "platform_id": result.platform_id,
+            "url": result.url,
+            "error": result.error,
+            "published_at": result.published_at.isoformat()
+        }
+        
+    except Exception as e:
+        activity.logger.error(f"Publishing failed: {e}")
+        return {
+            "content_id": content_piece.content_id,
+            "status": PublishStatus.FAILED.value,
+            "error": str(e)
+        }
+
+
+@activity.defn
+async def check_publishing_readiness() -> Dict[str, Any]:
+    """Check if publishing is configured and ready"""
+    from src.agents.marketing.social_publisher import social_publisher
+    
+    try:
+        # Verify credentials for all channels
+        credentials = await social_publisher.verify_all_credentials()
+        configured_channels = social_publisher.get_configured_channels()
+        
+        return {
+            "ready": len(configured_channels) > 0,
+            "configured_channels": [ch.value for ch in configured_channels],
+            "credentials_valid": {ch.value: valid for ch, valid in credentials.items()},
+            "message": "Publishing ready" if configured_channels else "No channels configured"
+        }
+        
+    except Exception as e:
+        return {
+            "ready": False,
+            "configured_channels": [],
+            "credentials_valid": {},
+            "message": f"Publishing check failed: {str(e)}"
+        }
+
+
 # Workflow implementation
 @workflow.defn
 class MarketingWorkflow:
@@ -487,6 +564,56 @@ class MarketingWorkflow:
                 start_to_close_timeout=ACTIVITY_TIMEOUT,
                 retry_policy=DEFAULT_RETRY_POLICY
             )
+            
+            # Step 7: Auto-publish if requested
+            if request.auto_publish:
+                workflow.logger.info("Auto-publishing enabled, checking readiness")
+                
+                # Check if publishing is configured
+                readiness = await workflow.execute_activity(
+                    check_publishing_readiness,
+                    start_to_close_timeout=ACTIVITY_TIMEOUT
+                )
+                
+                if readiness["ready"]:
+                    workflow.logger.info(
+                        f"Publishing to channels: {readiness['configured_channels']}"
+                    )
+                    
+                    # Publish content pieces
+                    publish_tasks = []
+                    for piece in optimized_content:
+                        # Only publish to configured channels
+                        if piece.channel.value in readiness["configured_channels"]:
+                            task = workflow.execute_activity(
+                                publish_content_piece,
+                                args=[piece, request.publish_immediately],
+                                start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,
+                                retry_policy=DEFAULT_RETRY_POLICY
+                            )
+                            publish_tasks.append(task)
+                    
+                    # Execute publishing in batches
+                    publish_results = []
+                    batch_size = 5
+                    for i in range(0, len(publish_tasks), batch_size):
+                        batch = publish_tasks[i:i+batch_size]
+                        batch_results = await asyncio.gather(*batch)
+                        publish_results.extend(batch_results)
+                        
+                        workflow.logger.info(
+                            f"Published {len(publish_results)} pieces so far"
+                        )
+                    
+                    # Update campaign result with publishing info
+                    campaign_result.metadata["publishing_results"] = publish_results
+                    campaign_result.metadata["auto_published"] = True
+                else:
+                    workflow.logger.warning(
+                        f"Publishing not ready: {readiness['message']}"
+                    )
+                    campaign_result.metadata["auto_published"] = False
+                    campaign_result.metadata["publishing_error"] = readiness["message"]
             
             workflow.logger.info(
                 f"Marketing workflow completed successfully - campaign_id={campaign_result.campaign_id}, total_pieces={campaign_result.total_pieces}, execution_time={execution_time}"
@@ -620,7 +747,9 @@ async def start_marketing_worker():
             optimize_content_batch,
             collect_campaign_analytics,
             apply_campaign_optimizations,
-            create_marketing_capsule
+            create_marketing_capsule,
+            publish_content_piece,
+            check_publishing_readiness
         ]
     )
     

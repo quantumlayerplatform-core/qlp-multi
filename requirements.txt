@@ -99,3 +99,7 @@ flake8==6.1.0
 isort==5.12.0
 autoflake==2.2.1
 pre-commit==3.5.0
+
+# Social Media APIs (for marketing auto-publish)
+tweepy==4.14.0
+linkedin-api==2.1.1
