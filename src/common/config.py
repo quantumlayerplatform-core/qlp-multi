@@ -181,6 +181,39 @@ class Settings(BaseSettings):
     AZURE_T2_DEPLOYMENT: str = Field(default="gpt-4", description="Azure deployment for T2")
     AZURE_T3_DEPLOYMENT: str = Field(default="gpt-4.1", description="Azure deployment for T3")
     
+    # AWS Bedrock Configuration
+    AWS_ACCESS_KEY_ID: Optional[str] = Field(default=None, description="AWS Access Key ID")
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, description="AWS Secret Access Key")
+    AWS_SESSION_TOKEN: Optional[str] = Field(default=None, description="AWS Session Token (for temporary credentials)")
+    AWS_REGION: str = Field(default="us-east-1", description="AWS region for Bedrock services")
+    AWS_BEDROCK_ENDPOINT: Optional[str] = Field(default=None, description="Custom AWS Bedrock endpoint (for VPC/private endpoints)")
+    
+    # AWS Bedrock Model Selection by Tier
+    AWS_T0_MODEL: str = Field(default="anthropic.claude-3-haiku-20240307-v1:0", description="AWS Bedrock model for T0 agents")
+    AWS_T1_MODEL: str = Field(default="anthropic.claude-3-sonnet-20240229-v1:0", description="AWS Bedrock model for T1 agents")
+    AWS_T2_MODEL: str = Field(default="anthropic.claude-3-5-sonnet-20240620-v1:0", description="AWS Bedrock model for T2 agents")
+    AWS_T3_MODEL: str = Field(default="anthropic.claude-3-opus-20240229-v1:0", description="AWS Bedrock model for T3 agents")
+    
+    # AWS Bedrock Advanced Configuration
+    AWS_BEDROCK_RETRY_ATTEMPTS: int = Field(default=3, description="Number of retry attempts for Bedrock API calls")
+    AWS_BEDROCK_TIMEOUT: int = Field(default=60, description="Timeout in seconds for Bedrock API calls")
+    AWS_BEDROCK_MAX_CONCURRENT: int = Field(default=10, description="Maximum concurrent Bedrock requests")
+    AWS_BEDROCK_ENABLE_LOGGING: bool = Field(default=True, description="Enable detailed logging for Bedrock requests")
+    
+    # Multi-Provider Ensemble Configuration
+    ENSEMBLE_ENABLED: bool = Field(default=False, description="Enable ensemble validation for critical tasks")
+    ENSEMBLE_MIN_CONSENSUS: float = Field(default=0.7, description="Minimum consensus score for ensemble acceptance")
+    ENSEMBLE_PROVIDERS: List[str] = Field(default=["aws_bedrock", "azure_openai"], description="Providers to use in ensemble")
+    
+    # Provider Health Monitoring
+    PROVIDER_HEALTH_CHECK_INTERVAL: int = Field(default=60, description="Provider health check interval in seconds")
+    PROVIDER_CIRCUIT_BREAKER_THRESHOLD: int = Field(default=5, description="Failure count to trigger circuit breaker")
+    PROVIDER_CIRCUIT_BREAKER_TIMEOUT: int = Field(default=300, description="Circuit breaker timeout in seconds")
+    
+    # Regional Optimization
+    REGIONAL_OPTIMIZATION_ENABLED: bool = Field(default=True, description="Enable regional provider optimization")
+    PREFERRED_REGIONS: List[str] = Field(default=["us-east-1", "eu-west-1", "ap-southeast-1"], description="Preferred AWS regions in order")
+    
     # Multi-tenancy
     MULTI_TENANT_ENABLED: bool = Field(default=True)
     DEFAULT_TENANT_ID: str = Field(default="default")
@@ -273,6 +306,38 @@ class Settings(BaseSettings):
             }
         }
         return limits.get(tier, limits["free"])
+    
+    def validate_aws_config(self) -> Dict[str, bool]:
+        """Validate AWS configuration"""
+        validation = {
+            "has_credentials": bool(self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY),
+            "has_region": bool(self.AWS_REGION),
+            "valid_region": self.AWS_REGION in [
+                "us-east-1", "us-west-2", "eu-west-1", "eu-central-1", 
+                "ap-southeast-1", "ap-northeast-1"
+            ],
+            "valid_timeout": 10 <= self.AWS_BEDROCK_TIMEOUT <= 300,
+            "valid_concurrent": 1 <= self.AWS_BEDROCK_MAX_CONCURRENT <= 50
+        }
+        validation["is_valid"] = all(validation.values())
+        return validation
+    
+    def get_aws_bedrock_config(self) -> Dict[str, Any]:
+        """Get AWS Bedrock configuration"""
+        return {
+            "region": self.AWS_REGION,
+            "endpoint_url": self.AWS_BEDROCK_ENDPOINT,
+            "retry_attempts": self.AWS_BEDROCK_RETRY_ATTEMPTS,
+            "timeout": self.AWS_BEDROCK_TIMEOUT,
+            "max_concurrent": self.AWS_BEDROCK_MAX_CONCURRENT,
+            "enable_logging": self.AWS_BEDROCK_ENABLE_LOGGING,
+            "tier_models": {
+                "T0": self.AWS_T0_MODEL,
+                "T1": self.AWS_T1_MODEL,
+                "T2": self.AWS_T2_MODEL,
+                "T3": self.AWS_T3_MODEL
+            }
+        }
 
 
 # Global settings instance

@@ -20,6 +20,11 @@ case "$SERVICE_NAME" in
         wait_for_service ${POSTGRES_HOST:-postgres} ${POSTGRES_PORT:-5432} "PostgreSQL"
         wait_for_service ${REDIS_HOST:-redis} ${REDIS_PORT:-6379} "Redis"
         wait_for_service ${TEMPORAL_HOST:-temporal} ${TEMPORAL_PORT:-7233} "Temporal"
+        
+        # Start temporal worker as background process
+        echo "Starting integrated temporal worker..."
+        python -m src.orchestrator.worker_production_db > /app/logs/temporal-worker.log 2>&1 &
+        
         PORT=${PORT:-8000}
         MODULE="src.orchestrator.main:app"
         ;;

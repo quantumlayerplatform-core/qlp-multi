@@ -64,6 +64,7 @@ class LLMProvider(str, Enum):
     AZURE_OPENAI = "azure_openai"
     ANTHROPIC = "anthropic"
     GROQ = "groq"
+    AWS_BEDROCK = "aws_bedrock"
 
 
 class LLMClient:
@@ -124,6 +125,15 @@ class LLMClient:
                 logger.info("Groq client initialized")
             except ImportError:
                 logger.warning("Groq library not installed")
+        
+        # AWS Bedrock client
+        if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+            try:
+                from src.agents.aws_bedrock_client import bedrock_client
+                self.clients[LLMProvider.AWS_BEDROCK] = bedrock_client
+                logger.info("AWS Bedrock client initialized", region=settings.AWS_REGION)
+            except Exception as e:
+                logger.warning(f"Failed to initialize AWS Bedrock client: {e}")
     
     @retry(
         stop=stop_after_attempt(3),
@@ -400,6 +410,48 @@ class LLMClient:
                         "cost": cost_data
                     }
                 
+                elif provider == LLMProvider.AWS_BEDROCK:
+                    # AWS Bedrock API - use our production client
+                    # Filter out cost tracking params for Bedrock client
+                    bedrock_kwargs = {k: v for k, v in kwargs.items() 
+                                    if k not in ['workflow_id', 'tenant_id', 'user_id', 'task_id', 'metadata']}
+                    
+                    response = await client.chat_completion(
+                        messages=messages,
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **bedrock_kwargs
+                    )
+                    
+                    # Track cost asynchronously (cost already calculated in bedrock client)
+                    if response.get("cost"):
+                        cost_task = asyncio.create_task(
+                            track_llm_cost(
+                                model=response["model"],
+                                provider=provider.value,
+                                prompt_tokens=response["usage"]["prompt_tokens"],
+                                completion_tokens=response["usage"]["completion_tokens"],
+                                workflow_id=workflow_id,
+                                tenant_id=tenant_id,
+                                user_id=user_id,
+                                task_id=task_id,
+                                metadata=metadata or {},
+                                latency_ms=int(response["latency"] * 1000)
+                            ),
+                            name=f"track_cost_{workflow_id}_{task_id}"
+                        )
+                        # Add error handler
+                        def handle_cost_error(task):
+                            try:
+                                task.result()
+                            except Exception as e:
+                                logger.error(f"Cost tracking failed: {e}")
+                        cost_task.add_done_callback(handle_cost_error)
+                    
+                    # Return the response (already properly formatted by bedrock client)
+                    return response
+                
             except Exception as e:
                 self.metrics["errors"] += 1
                 logger.error(f"LLM completion failed", 
@@ -413,8 +465,15 @@ class LLMClient:
     def _detect_provider(self, model: str) -> LLMProvider:
         """Auto-detect provider based on model name"""
         
-        # Claude models -> Anthropic
+        # Bedrock models (identified by "anthropic.", "amazon.", etc.)
+        if any(prefix in model.lower() for prefix in ["anthropic.", "amazon.", "ai21.", "cohere.", "meta."]):
+            if LLMProvider.AWS_BEDROCK in self.clients:
+                return LLMProvider.AWS_BEDROCK
+        
+        # Claude models -> Prefer Bedrock if available, otherwise Anthropic
         if "claude" in model.lower():
+            if LLMProvider.AWS_BEDROCK in self.clients:
+                return LLMProvider.AWS_BEDROCK
             return LLMProvider.ANTHROPIC
         
         # Mixtral/Llama models -> Groq (if available)
@@ -532,31 +591,48 @@ def get_model_for_tier(tier: str) -> tuple[str, LLMProvider]:
         azure_model = azure_model_config.get(tier, "gpt-35-turbo")
         return azure_model, LLMProvider.AZURE_OPENAI
     
+    # Check AWS Bedrock preference
+    aws_model_config = {
+        "T0": settings.AWS_T0_MODEL,
+        "T1": settings.AWS_T1_MODEL,
+        "T2": settings.AWS_T2_MODEL,
+        "T3": settings.AWS_T3_MODEL
+    }
+    
+    # If AWS Bedrock is preferred and available, use configured Bedrock model
+    if preferred_provider == "aws_bedrock" and llm_client.is_provider_available(LLMProvider.AWS_BEDROCK):
+        aws_model = aws_model_config.get(tier, settings.AWS_T0_MODEL)
+        return aws_model, LLMProvider.AWS_BEDROCK
+    
     # Otherwise, check available providers
     has_azure = llm_client.is_provider_available(LLMProvider.AZURE_OPENAI)
     has_openai = llm_client.is_provider_available(LLMProvider.OPENAI)
     has_anthropic = llm_client.is_provider_available(LLMProvider.ANTHROPIC)
     has_groq = llm_client.is_provider_available(LLMProvider.GROQ)
+    has_aws_bedrock = llm_client.is_provider_available(LLMProvider.AWS_BEDROCK)
     
-    # Fallback tier mapping if preferred provider is not available
+    # Intelligent tier mapping with AWS Bedrock prioritized for code generation
     tier_mapping = {
         "T0": [
             (has_azure, (settings.AZURE_T0_MODEL, LLMProvider.AZURE_OPENAI)),
+            (has_aws_bedrock, (settings.AWS_T0_MODEL, LLMProvider.AWS_BEDROCK)),  # Claude Haiku - fast & cheap
             (has_groq, ("llama3-8b-8192", LLMProvider.GROQ)),
             (has_openai, ("gpt-3.5-turbo", LLMProvider.OPENAI)),
         ],
         "T1": [
             (has_azure, (settings.AZURE_T1_MODEL, LLMProvider.AZURE_OPENAI)),
+            (has_aws_bedrock, (settings.AWS_T1_MODEL, LLMProvider.AWS_BEDROCK)),  # Claude Sonnet - balanced
             (has_openai, ("gpt-4o-mini", LLMProvider.OPENAI)),
-            (has_azure, ("gpt-3.5-turbo", LLMProvider.AZURE_OPENAI)),
-            (has_openai, ("gpt-3.5-turbo", LLMProvider.OPENAI)),
+            (has_anthropic, ("claude-3-sonnet-20240229", LLMProvider.ANTHROPIC)),
         ],
         "T2": [
+            (has_aws_bedrock, (settings.AWS_T2_MODEL, LLMProvider.AWS_BEDROCK)),  # Claude 3.5 Sonnet - best for code
             (has_azure, (settings.AZURE_T2_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-4-turbo-preview", LLMProvider.OPENAI)),
-            (has_anthropic, ("claude-3-opus-20240229", LLMProvider.ANTHROPIC)),
+            (has_anthropic, ("claude-3-5-sonnet-20240620", LLMProvider.ANTHROPIC)),
         ],
         "T3": [
+            (has_aws_bedrock, (settings.AWS_T3_MODEL, LLMProvider.AWS_BEDROCK)),  # Claude Opus - most capable
             (has_azure, (settings.AZURE_T3_MODEL, LLMProvider.AZURE_OPENAI)),
             (has_openai, ("gpt-4-turbo-preview", LLMProvider.OPENAI)),
             (has_anthropic, ("claude-3-opus-20240229", LLMProvider.ANTHROPIC)),

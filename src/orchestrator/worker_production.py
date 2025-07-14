@@ -1708,6 +1708,61 @@ class QLPWorkflow:
                 #             "message": "No main code found for sandbox testing"
                 #         })
             
+            # Check if GitHub push is requested
+            push_to_github = request.get("metadata", {}).get("push_to_github", False)
+            if push_to_github and workflow_result.get("capsule_id"):
+                workflow.logger.info(f"GitHub push requested for capsule {workflow_result['capsule_id']}")
+                
+                try:
+                    # Extract GitHub parameters from metadata (handle different field names)
+                    metadata = request.get("metadata", {})
+                    github_token = metadata.get("github_token")
+                    repo_name = metadata.get("github_repo_name") or metadata.get("repo_name")
+                    private = metadata.get("github_private", False) or metadata.get("private", False)
+                    use_enterprise = metadata.get("github_enterprise", True) or metadata.get("use_enterprise", True)
+                    
+                    workflow.logger.info(f"GitHub params - token: {'Yes' if github_token else 'No'}, repo: {repo_name}, private: {private}")
+                    
+                    # Execute GitHub push activity
+                    github_params = {
+                        "capsule_id": workflow_result["capsule_id"],
+                        "github_token": github_token,
+                        "repo_name": repo_name,
+                        "private": private,
+                        "use_enterprise": use_enterprise
+                    }
+                    
+                    github_result = await workflow.execute_activity(
+                        push_to_github_activity,
+                        github_params,
+                        start_to_close_timeout=timedelta(minutes=5),
+                        heartbeat_timeout=timedelta(minutes=2),
+                        retry_policy=RetryPolicy(
+                            initial_interval=timedelta(seconds=2),
+                            backoff_coefficient=2.0,
+                            maximum_interval=timedelta(minutes=1),
+                            maximum_attempts=3
+                        )
+                    )
+                    
+                    if github_result.get("success"):
+                        workflow_result["github_url"] = github_result.get("repository_url")
+                        workflow_result["metadata"]["github_push"] = github_result
+                        workflow.logger.info(f"Successfully pushed to GitHub: {github_result.get('repository_url')}")
+                    else:
+                        workflow.logger.error(f"GitHub push failed: {github_result.get('error')}")
+                        workflow_result["errors"].append({
+                            "type": "github_push_failed",
+                            "message": f"Failed to push to GitHub: {github_result.get('error')}"
+                        })
+                        
+                except Exception as e:
+                    workflow.logger.error(f"GitHub push exception: {str(e)}", exc_info=True)
+                    workflow_result["errors"].append({
+                        "type": "github_push_exception",
+                        "message": f"Exception during GitHub push: {str(e)}"
+                    })
+            
             # Set final status based on all validations
             if workflow_result["tasks_completed"] == workflow_result["tasks_total"]:
                 if workflow_result.get("runtime_validated", False) and workflow_result.get("delivery_ready", False):
@@ -1948,6 +2003,22 @@ class QLPWorkflow:
         return result
 
 
+# Import push_to_github_activity from main.py where it's already defined
+try:
+    from src.orchestrator.main import push_to_github_activity
+    logger.info("Successfully imported push_to_github_activity from main.py")
+except ImportError as e:
+    logger.error(f"Failed to import push_to_github_activity from main.py: {e}")
+    # Define it here as fallback
+    @activity.defn
+    async def push_to_github_activity(params: Dict[str, Any]) -> Dict[str, Any]:
+        """Push capsule to GitHub with enterprise structure - Fallback implementation"""
+        return {
+            "success": False,
+            "error": "GitHub push activity not available"
+        }
+
+
 # Worker setup
 async def start_worker():
     """Start the Temporal worker with enhanced capabilities"""
@@ -2004,7 +2075,8 @@ async def start_worker():
         request_aitl_review_activity,
         create_ql_capsule_activity,
         llm_clean_code_activity,
-        prepare_delivery_activity
+        prepare_delivery_activity,
+        push_to_github_activity  # Add GitHub push activity
     ]
     
     # Add marketing workflows and activities if available

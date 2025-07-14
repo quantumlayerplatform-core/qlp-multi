@@ -100,11 +100,15 @@ async def generate_enterprise_project(
         )
         
         # Execute workflow
+        # Map 'id' to 'request_id' for workflow compatibility
+        workflow_data = exec_request.model_dump()
+        workflow_data['request_id'] = workflow_data.pop('id')
+        
         handle = await temporal_client.start_workflow(
             "QLPWorkflow",
-            exec_request.model_dump(),
+            workflow_data,
             id=workflow_id,
-            task_queue="qlp-queue"
+            task_queue="qlp-main"
         )
         
         # Wait for workflow to complete

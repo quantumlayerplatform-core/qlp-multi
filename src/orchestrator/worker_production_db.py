@@ -32,6 +32,7 @@ from src.orchestrator.worker_production import (
     llm_clean_code_activity,
     create_ql_capsule_activity,  # Import the original activity
     prepare_delivery_activity,  # Import the delivery preparation activity
+    push_to_github_activity,  # Import the GitHub push activity
 )
 
 # Import marketing workflows and activities
@@ -79,6 +80,7 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
         create_ql_capsule_activity,  # Original activity from worker_production
         create_ql_capsule_activity_with_db,  # Database-enabled version
         prepare_delivery_activity,  # Delivery preparation activity
+        push_to_github_activity,  # GitHub push activity
     ]
     
     # Add marketing workflows and activities if available
