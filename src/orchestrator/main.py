@@ -67,6 +67,22 @@ app = FastAPI(
     redoc_url=None  # Disable default redoc - we'll use custom
 )
 
+# Initialize Temporal client at startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize shared resources at startup"""
+    logger.info(f"🚀 Starting up orchestrator, connecting to Temporal at {settings.TEMPORAL_SERVER}")
+    try:
+        app.state.temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
+        logger.info(f"✅ Connected to Temporal at {settings.TEMPORAL_SERVER}")
+    except Exception as e:
+        logger.error(f"❌ Failed to connect to Temporal: {e}")
+        # Don't raise, allow app to start but log the error
+        app.state.temporal_client = None
+
 # Setup production middleware (includes CORS, security headers, monitoring, etc.)
 setup_middleware(app)
 
@@ -113,9 +129,7 @@ app.include_router(enterprise_router)
 from src.api.v2.hap_api import router as hap_router
 app.include_router(hap_router)
 
-# Include Marketing Campaign endpoints
-from src.api.v2.marketing_api import router as marketing_router
-app.include_router(marketing_router)
+# Marketing imports will be done inside the endpoints to avoid global state issues
 
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
@@ -1259,6 +1273,175 @@ def _calculate_duration(params: Dict[str, Any]) -> float:
 
 
 # FastAPI endpoints
+# Import the dependency
+from src.common.deps import get_temporal_client
+from src.common.clerk_auth import get_current_user
+
+# Marketing Campaign Endpoints
+@app.post("/api/v2/marketing/campaigns", response_model=Dict[str, Any])
+async def create_marketing_campaign(
+    request: Dict[str, Any],  # Use dict to avoid importing at module level
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Generate a complete marketing campaign using Temporal workflow"""
+    try:
+        # Import inside function to avoid global state issues
+        from src.agents.marketing.models import CampaignObjective
+        from src.orchestrator.marketing_workflow import MarketingWorkflowRequest, MarketingWorkflow
+        logger.info(
+            "Creating marketing campaign via Temporal",
+            user_id=current_user.get('user_id'),
+            objective=request.get('objective')
+        )
+        
+        # Create workflow request
+        workflow_request = MarketingWorkflowRequest(
+            request_id=f"marketing_{datetime.now().timestamp()}",
+            tenant_id=current_user.get('tenant_id', 'default'),
+            user_id=current_user.get('user_id', 'default'),
+            objective=request['objective'],
+            product_description=request['product_description'],
+            key_features=request['key_features'],
+            target_audience=request['target_audience'],
+            unique_value_prop=request['unique_value_prop'],
+            duration_days=request['duration_days'],
+            channels=request['channels'],
+            tone_preferences=request['tone_preferences'],
+            launch_date=request.get('launch_date'),
+            constraints=request.get('constraints')
+        )
+        
+        # Start workflow on marketing queue
+        workflow_id = f"marketing-campaign-{workflow_request.request_id}"
+        handle = await temporal_client.start_workflow(
+            MarketingWorkflow.run,
+            workflow_request,
+            id=workflow_id,
+            task_queue="marketing-queue"
+        )
+        
+        # Wait for workflow completion (with timeout)
+        try:
+            campaign_result = await handle.result(timeout=300)  # 5 minute timeout
+            
+            return {
+                "workflow_id": workflow_id,
+                "campaign_id": campaign_result.campaign_id,
+                "status": campaign_result.status,
+                "total_content": campaign_result.total_pieces,
+                "channels": campaign_result.channels_used,
+                "duration_days": request.duration_days,
+                "execution_time": campaign_result.execution_time,
+                "message": "Campaign generated successfully via Temporal workflow"
+            }
+        
+        except asyncio.TimeoutError:
+            return {
+                "workflow_id": workflow_id,
+                "status": "processing",
+                "message": "Campaign generation in progress. Check workflow status for updates."
+            }
+        
+    except Exception as e:
+        logger.error("Campaign generation failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v2/marketing/content/generate")
+async def generate_marketing_content(
+    request: Dict[str, Any],  # Use dict to avoid importing at module level
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Generate individual marketing content piece using Temporal workflow"""
+    try:
+        # Import inside function
+        from src.orchestrator.marketing_workflow import ContentGenerationWorkflow
+        
+        logger.info(
+            "Generating content via Temporal",
+            content_type=request.get('content_type'),
+            channel=request.get('channel'),
+            user_id=current_user.get('user_id')
+        )
+        
+        # Start content generation workflow
+        workflow_id = f"marketing-content-{datetime.now().timestamp()}"
+        handle = await temporal_client.start_workflow(
+            ContentGenerationWorkflow.run,
+            args=[
+                request['content_type'],
+                request['channel'],
+                request['topic'],
+                request.get('features', ["AI-powered", "Fast", "Reliable"]),
+                request.get('target_audience', "Developers"),
+                [request['tone']]
+            ],
+            id=workflow_id,
+            task_queue="marketing-queue"
+        )
+        
+        # Wait for workflow completion
+        try:
+            content_piece = await handle.result(timeout=60)  # 1 minute timeout
+            
+            return {
+                "workflow_id": workflow_id,
+                "content_id": content_piece.content_id,
+                "content": content_piece.content,
+                "type": content_piece.type,
+                "channel": content_piece.channel,
+                "tone": content_piece.tone,
+                "keywords": content_piece.keywords,
+                "hashtags": content_piece.hashtags,
+                "generated_at": datetime.now().isoformat(),
+                "message": "Content generated successfully via Temporal workflow"
+            }
+            
+        except asyncio.TimeoutError:
+            return {
+                "workflow_id": workflow_id,
+                "status": "processing",
+                "message": "Content generation in progress. Check workflow status for updates."
+            }
+            
+    except Exception as e:
+        logger.error("Content generation failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v2/marketing/workflows/{workflow_id}")
+async def get_marketing_workflow_status(
+    workflow_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Get status of a marketing workflow"""
+    try:
+        
+        # Get workflow handle
+        handle = temporal_client.get_workflow_handle(workflow_id)
+        
+        # Describe workflow to get status
+        description = await handle.describe()
+        
+        return {
+            "workflow_id": workflow_id,
+            "status": description.status.name,
+            "start_time": description.start_time.isoformat() if description.start_time else None,
+            "close_time": description.close_time.isoformat() if description.close_time else None,
+            "execution_time": (
+                (description.close_time - description.start_time).total_seconds()
+                if description.close_time and description.start_time
+                else None
+            ),
+            "task_queue": description.task_queue,
+            "workflow_type": description.workflow_type
+        }
+        
+    except Exception as e:
+        logger.error("Failed to get workflow status", error=str(e))
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {str(e)}")
+
 @app.post("/execute", response_model=Dict[str, str])
 async def execute_request(request: ExecutionRequest):
     """
@@ -1377,7 +1560,107 @@ async def approve_execution(workflow_id: str):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "meta-orchestrator"}
+    temporal_status = "connected" if hasattr(app.state, 'temporal_client') and app.state.temporal_client else "disconnected"
+    return {
+        "status": "healthy", 
+        "service": "meta-orchestrator",
+        "temporal_status": temporal_status,
+        "temporal_server": settings.TEMPORAL_SERVER
+    }
+
+@app.post("/test-marketing-no-auth")
+async def test_marketing_no_auth(
+    request: Dict[str, Any],
+    temporal_client: Client = Depends(get_temporal_client)
+):
+    """Test marketing campaign without authentication"""
+    try:
+        from src.orchestrator.marketing_workflow import MarketingWorkflowRequest, MarketingWorkflow
+        
+        workflow_request = MarketingWorkflowRequest(
+            request_id=f"test_{datetime.now().timestamp()}",
+            tenant_id="test-tenant",
+            user_id="test-user",
+            objective=request['objective'],
+            product_description=request['product_description'],
+            key_features=request['key_features'],
+            target_audience=request['target_audience'],
+            unique_value_prop=request['unique_value_prop'],
+            duration_days=request['duration_days'],
+            channels=request['channels'],
+            tone_preferences=request['tone_preferences']
+        )
+        
+        workflow_id = f"marketing-campaign-{workflow_request.request_id}"
+        handle = await temporal_client.start_workflow(
+            MarketingWorkflow.run,
+            workflow_request,
+            id=workflow_id,
+            task_queue="marketing-queue"
+        )
+        
+        return {
+            "workflow_id": workflow_id,
+            "status": "started",
+            "message": "Marketing campaign workflow started successfully"
+        }
+    except Exception as e:
+        logger.error(f"Test marketing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/test-temporal-marketing")
+async def test_temporal_marketing():
+    """Test Temporal connection for marketing workflows"""
+    try:
+        # First, check if we have a client in app state
+        has_client = hasattr(app.state, 'temporal_client')
+        client_exists = has_client and app.state.temporal_client is not None
+        
+        logger.info(f"Testing Temporal - has_client: {has_client}, client_exists: {client_exists}")
+        
+        # Try creating a new client for this test
+        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        
+        # Try to start a simple marketing workflow
+        from src.orchestrator.marketing_workflow import MarketingWorkflowRequest, MarketingWorkflow
+        
+        test_request = MarketingWorkflowRequest(
+            request_id="test-123",
+            tenant_id="test-tenant",
+            user_id="test-user",
+            objective="launch_awareness",
+            product_description="Test product",
+            key_features=["Feature 1", "Feature 2"],
+            target_audience="Developers",
+            unique_value_prop="Test value",
+            duration_days=7,
+            channels=["twitter"],
+            tone_preferences=["technical"]
+        )
+        
+        workflow_id = f"test-marketing-{datetime.now().timestamp()}"
+        handle = await temporal_client.start_workflow(
+            MarketingWorkflow.run,
+            test_request,
+            id=workflow_id,
+            task_queue="marketing-queue"  # Use marketing queue
+        )
+        
+        return {
+            "status": "success",
+            "workflow_id": workflow_id,
+            "message": "Marketing workflow started successfully",
+            "app_state_client": client_exists,
+            "temporal_server": settings.TEMPORAL_SERVER
+        }
+    except Exception as e:
+        logger.error(f"Test temporal marketing failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "type": type(e).__name__,
+            "app_state_client": hasattr(app.state, 'temporal_client') and app.state.temporal_client is not None
+        }
 
 
 @app.get("/workflow/status/{workflow_id}")
@@ -4179,106 +4462,8 @@ async def reset_optimization_learning():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Marketing Workflow Support Endpoints
-@app.post("/marketing/strategy")
-async def generate_marketing_strategy(request: Dict[str, Any]):
-    """Generate marketing campaign strategy (called by workflow activity)"""
-    try:
-        from src.agents.marketing.orchestrator import MarketingOrchestrator
-        orchestrator = MarketingOrchestrator()
-        
-        # Generate strategy using narrative agent
-        strategy = await orchestrator.narrative_agent.generate_strategy(
-            objective=request["objective"],
-            product_description=request["product_description"],
-            key_features=request["key_features"],
-            target_audience=request["target_audience"],
-            unique_value_prop=request["unique_value_prop"],
-            duration_days=request["duration_days"],
-            channels=request["channels"]
-        )
-        
-        return {
-            "strategy": strategy,
-            "content_themes": ["innovation", "reliability", "efficiency"],
-            "messaging_pillars": ["AI-powered", "Enterprise-ready", "Developer-friendly"],
-            "channel_strategies": {
-                channel: f"Optimize for {channel} audience"
-                for channel in request["channels"]
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Strategy generation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/marketing/calendar")
-async def create_marketing_calendar(request: Dict[str, Any]):
-    """Create content calendar (called by workflow activity)"""
-    try:
-        from src.agents.marketing.orchestrator import MarketingOrchestrator
-        from datetime import datetime, timedelta
-        
-        orchestrator = MarketingOrchestrator()
-        duration_days = request["duration_days"]
-        channels = request["channels"]
-        
-        # Generate calendar using scheduler agent
-        calendar = {}
-        start_date = datetime.now()
-        
-        for day in range(duration_days):
-            date = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
-            daily_content = []
-            
-            # Schedule 1-3 pieces per day based on channels
-            for channel in channels[:3]:  # Max 3 per day
-                daily_content.append({
-                    "type": f"{channel}_post",
-                    "channel": channel,
-                    "time": "09:00" if channel == "linkedin" else "14:00"
-                })
-            
-            if daily_content:
-                calendar[date] = daily_content
-        
-        return {"calendar": calendar}
-        
-    except Exception as e:
-        logger.error(f"Calendar creation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/capsules/marketing")
-async def create_marketing_capsule(request: Dict[str, Any]):
-    """Create marketing capsule (called by workflow activity)"""
-    try:
-        from src.common.marketing_capsule import MarketingCapsule
-        from src.orchestrator.capsule_storage import CapsuleStorageService
-        
-        # Create marketing capsule
-        capsule = MarketingCapsule(
-            request_id=request["request_id"],
-            user_id=request["user_id"],
-            tenant_id=request["tenant_id"],
-            campaign_data=request["campaign_data"],
-            metadata=request["metadata"]
-        )
-        
-        # Store capsule
-        storage = CapsuleStorageService()
-        capsule_id = await storage.store_capsule(capsule)
-        
-        return {
-            "capsule_id": capsule_id,
-            "status": "created",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Marketing capsule creation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Note: Marketing workflow support endpoints have been moved to agent-factory service
+# This follows the established pattern where all agent interactions go through agent-factory
 
 
 # Worker setup

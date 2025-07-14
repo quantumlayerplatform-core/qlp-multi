@@ -119,7 +119,7 @@ async def generate_campaign_strategy(request: MarketingWorkflowRequest) -> Dict[
         # Use marketing orchestrator to generate strategy
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                "http://orchestrator:8000/marketing/strategy",
+                "http://agent-factory:8001/marketing/strategy",
                 json={
                     "objective": request.objective,
                     "product_description": request.product_description,
@@ -158,7 +158,7 @@ async def create_content_calendar(request: MarketingWorkflowRequest, strategy: D
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                "http://orchestrator:8000/marketing/calendar",
+                "http://agent-factory:8001/marketing/calendar",
                 json={
                     "duration_days": request.duration_days,
                     "channels": request.channels,
@@ -359,7 +359,7 @@ async def create_marketing_capsule(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                "http://orchestrator:8000/capsules/marketing",
+                "http://agent-factory:8001/marketing/capsule",
                 json={
                     "request_id": request.request_id,
                     "tenant_id": request.tenant_id,
@@ -489,10 +489,7 @@ class MarketingWorkflow:
             )
             
             workflow.logger.info(
-                f"Marketing workflow completed successfully",
-                campaign_id=campaign_result.campaign_id,
-                total_pieces=campaign_result.total_pieces,
-                execution_time=execution_time
+                f"Marketing workflow completed successfully - campaign_id={campaign_result.campaign_id}, total_pieces={campaign_result.total_pieces}, execution_time={execution_time}"
             )
             
             return campaign_result

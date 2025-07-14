@@ -294,6 +294,35 @@ services:
       retries: 3
       start_period: 60s
 
+  marketing-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-marketing-worker
+    env_file:
+      - .env
+    environment:
+      SERVICE_NAME: marketing-worker
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_SERVER: temporal:7233
+      MARKETING_TASK_QUEUE: marketing-queue
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      temporal:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./src:/app/src:ro
+    networks:
+      - qlp-network
+    command: ["python", "-m", "src.orchestrator.marketing_worker"]
+
   # Monitoring and Management
   pgadmin:
     image: dpage/pgadmin4:latest

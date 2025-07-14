@@ -475,6 +475,309 @@ else:
         }
 
 
+# Marketing Agent Endpoints
+@app.post("/marketing/strategy")
+async def generate_marketing_strategy(request: Dict[str, Any]):
+    """Generate marketing strategy using marketing orchestrator"""
+    try:
+        from src.agents.marketing.orchestrator import MarketingOrchestrator
+        
+        logger.info("Generating marketing strategy", request_id=request.get("request_id"))
+        
+        orchestrator = MarketingOrchestrator()
+        
+        # Format request into a prompt for the narrative agent
+        prompt = f"""Create a marketing campaign strategy for:
+
+Objective: {request["objective"]}
+Product: {request["product_description"]}
+Key Features: {', '.join(request["key_features"])}
+Target Audience: {request["target_audience"]}
+Unique Value Proposition: {request["unique_value_prop"]}
+Campaign Duration: {request["duration_days"]} days
+Channels: {', '.join(request["channels"])}
+
+Please provide a comprehensive marketing strategy including:
+1. Core messaging and narrative
+2. Channel-specific approaches
+3. Content themes and pillars
+4. Key performance indicators
+"""
+        
+        # Generate strategy
+        strategy = await orchestrator.narrative_agent.generate_strategy(prompt)
+        
+        # Extract themes and pillars based on the strategy
+        content_themes = ["innovation", "reliability", "efficiency"]  # Default themes
+        messaging_pillars = ["AI-powered", "Enterprise-ready", "Developer-friendly"]
+        
+        # Generate channel strategies
+        channel_strategies = {}
+        for channel in request["channels"]:
+            channel_strategies[channel] = f"Optimize content for {channel} audience with focus on {request['objective']}"
+        
+        return {
+            "strategy": strategy,
+            "content_themes": content_themes,
+            "messaging_pillars": messaging_pillars,
+            "channel_strategies": channel_strategies
+        }
+        
+    except Exception as e:
+        logger.error(f"Marketing strategy generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/marketing/content")
+async def generate_marketing_content(request: Dict[str, Any]):
+    """Generate marketing content piece using specialized agents"""
+    try:
+        from src.agents.marketing.orchestrator import MarketingOrchestrator
+        
+        logger.info(
+            "Generating marketing content",
+            content_type=request.get("content_type"),
+            channel=request.get("channel")
+        )
+        
+        orchestrator = MarketingOrchestrator()
+        
+        content_type = request.get("content_type", "social_post")
+        channel = request.get("channel", "twitter")
+        
+        # Select appropriate agent based on content type
+        if content_type in ["social_post", "tweet", "tweet_thread", "linkedin_post"]:
+            agent = orchestrator.evangelism_agent
+        elif content_type in ["blog_post", "article", "whitepaper"]:
+            agent = orchestrator.narrative_agent
+        else:
+            agent = orchestrator.tone_agent
+        
+        # Create content prompt
+        prompt = f"""Create a {content_type} for {channel} about:
+
+Product: {request.get('product_info', 'Our product')}
+Features: {', '.join(request.get('features', []))}
+Target Audience: {request.get('target_audience', 'General audience')}
+Tone: {', '.join(request.get('tone_preferences', ['professional']))}
+Strategy Context: {request.get('strategy', 'Product launch') if isinstance(request.get('strategy'), str) else request.get('strategy', {}).get('strategy', 'Product launch')}
+
+Requirements:
+- Make it engaging and appropriate for {channel}
+- Include relevant hashtags for social media
+- Keep within platform limits (e.g., 280 chars for Twitter)
+- Align with our brand voice and messaging"""
+
+        # Use generic prompt approach to avoid enum issues
+        from src.agents.azure_llm_client import LLMProvider
+        
+        response = await agent.llm_client.chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
+            provider=LLMProvider.AZURE_OPENAI,
+            max_tokens=1000
+        )
+        
+        content = response.get("content", "")
+        
+        # Extract hashtags and keywords
+        hashtags = []
+        keywords = []
+        
+        if channel == "twitter":
+            hashtags = ["#AI", "#TechInnovation", "#EnterpriseSoftware"]
+            # Extract any hashtags from content
+            import re
+            found_hashtags = re.findall(r'#\w+', content)
+            hashtags.extend(found_hashtags)
+            hashtags = list(set(hashtags))[:5]  # Limit to 5 unique hashtags
+            
+        elif channel == "linkedin":
+            hashtags = ["#DigitalTransformation", "#AIInnovation", "#EnterpriseTech"]
+            keywords = ["enterprise", "AI", "automation", "efficiency"]
+        
+        return {
+            "content_id": f"{content_type}_{channel}_{datetime.now().timestamp()}",
+            "type": content_type,
+            "channel": channel,
+            "title": f"{content_type.replace('_', ' ').title()} for {channel}",
+            "content": content,
+            "tone": request.get('tone_preferences', ['professional'])[0] if request.get('tone_preferences') else 'professional',
+            "keywords": keywords,
+            "hashtags": hashtags,
+            "cta": "Learn more about our AI-powered platform",
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "agent_used": agent.__class__.__name__
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Marketing content generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/marketing/calendar")
+async def create_marketing_calendar(request: Dict[str, Any]):
+    """Create content calendar for marketing campaign"""
+    try:
+        from datetime import datetime, timedelta
+        
+        logger.info("Creating marketing content calendar")
+        
+        duration_days = request.get("duration_days", 7)
+        channels = request.get("channels", ["twitter", "linkedin"])
+        strategy = request.get("strategy", {})
+        launch_date = request.get("launch_date")
+        
+        # Generate calendar with content distribution
+        calendar = {}
+        start_date = datetime.fromisoformat(launch_date) if launch_date else datetime.now()
+        
+        # Distribute content across days and channels
+        content_types = {
+            "twitter": ["tweet_thread", "tweet_thread", "tweet_thread"],
+            "linkedin": ["linkedin_post", "linkedin_post", "linkedin_post"],
+            "medium": ["blog_post", "blog_post"],
+            "reddit": ["reddit_post", "reddit_post"],
+            "email": ["email_campaign", "email_campaign", "email_campaign"]
+        }
+        
+        for day in range(duration_days):
+            date = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
+            daily_content = []
+            
+            # Schedule content based on day and channel
+            for channel in channels:
+                if channel in content_types:
+                    # Different posting frequency for different channels
+                    if channel == "twitter" and day % 1 == 0:  # Daily tweets
+                        daily_content.append({
+                            "type": content_types[channel][day % len(content_types[channel])],
+                            "channel": channel,
+                            "time": "09:00" if day % 2 == 0 else "14:00",
+                            "theme": strategy.get("content_themes", ["product"])[0]
+                        })
+                    elif channel == "linkedin" and day % 2 == 0:  # Every other day
+                        daily_content.append({
+                            "type": content_types[channel][0],
+                            "channel": channel,
+                            "time": "10:00",
+                            "theme": strategy.get("content_themes", ["thought_leadership"])[0]
+                        })
+                    elif channel == "medium" and day % 7 == 3:  # Weekly blog
+                        daily_content.append({
+                            "type": "blog_post",
+                            "channel": channel,
+                            "time": "08:00",
+                            "theme": "deep_dive"
+                        })
+                    elif channel == "email" and day % 7 == 1:  # Weekly newsletter
+                        daily_content.append({
+                            "type": "newsletter",
+                            "channel": channel,
+                            "time": "09:00",
+                            "theme": "weekly_roundup"
+                        })
+            
+            if daily_content:
+                calendar[date] = daily_content
+        
+        return {"calendar": calendar}
+        
+    except Exception as e:
+        logger.error(f"Calendar creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/marketing/optimize")
+async def optimize_marketing_content(request: Dict[str, Any]):
+    """Optimize marketing content for tone and consistency"""
+    try:
+        from src.agents.marketing.orchestrator import MarketingOrchestrator
+        
+        logger.info("Optimizing marketing content batch")
+        
+        orchestrator = MarketingOrchestrator()
+        content_pieces = request.get("content_pieces", [])
+        target_audience = request.get("target_audience", "General audience")
+        tone_preferences = request.get("tone_preferences", ["professional"])
+        
+        optimized_pieces = []
+        
+        for piece in content_pieces:
+            # Use tone agent to optimize each piece
+            optimization_prompt = f"""Optimize this {piece.get('type', 'content')} for {piece.get('channel', 'general')}:
+
+Original Content: {piece.get('content', '')}
+
+Requirements:
+- Target Audience: {target_audience}
+- Tone: {', '.join(tone_preferences)}
+- Maintain key messaging while improving engagement
+- Ensure consistency with brand voice
+- Optimize for {piece.get('channel', 'general')} best practices"""
+
+            from src.agents.azure_llm_client import LLMProvider
+            
+            response = await orchestrator.tone_agent.llm_client.chat_completion(
+                messages=[{"role": "user", "content": optimization_prompt}],
+                model=settings.AZURE_OPENAI_DEPLOYMENT_NAME,
+                provider=LLMProvider.AZURE_OPENAI,
+                max_tokens=1000
+            )
+            
+            optimized_content = response.get("content", piece.get("content", ""))
+            
+            # Update the piece with optimized content
+            optimized_piece = piece.copy()
+            optimized_piece["content"] = optimized_content
+            # Don't add extra fields that ContentPiece doesn't support
+            
+            optimized_pieces.append(optimized_piece)
+        
+        return {
+            "optimized_content": optimized_pieces,
+            "total_optimized": len(optimized_pieces),
+            "optimization_complete": True
+        }
+        
+    except Exception as e:
+        logger.error(f"Marketing content optimization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/marketing/capsule")
+async def create_marketing_capsule(request: Dict[str, Any]):
+    """Create marketing capsule from campaign data"""
+    try:
+        logger.info("Creating marketing capsule")
+        
+        # Simple capsule structure for marketing campaigns
+        capsule_data = {
+            "capsule_id": f"marketing_{request.get('request_id', str(uuid4()))}",
+            "request_id": request.get("request_id"),
+            "user_id": request.get("user_id"),
+            "tenant_id": request.get("tenant_id"),
+            "campaign_data": request.get("campaign_data", {}),
+            "metadata": request.get("metadata", {}),
+            "created_at": datetime.now().isoformat(),
+            "status": "created"
+        }
+        
+        # In production, this would store to database
+        # For now, return the capsule data
+        return {
+            "capsule_id": capsule_data["capsule_id"],
+            "status": "created",
+            "timestamp": capsule_data["created_at"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Marketing capsule creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Error handling metrics endpoint
 @app.get("/error-metrics")
 async def get_error_metrics():

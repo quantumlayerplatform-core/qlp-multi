@@ -72,13 +72,20 @@ class LLMClient:
     def __init__(self):
         self.clients = {}
         self._initialize_clients()
-        self.request_semaphore = asyncio.Semaphore(20)  # Global rate limiting
+        self._request_semaphore = None  # Lazy initialize to avoid event loop issues
         self.metrics = {
             "requests": 0,
             "errors": 0,
             "retries": 0,
             "total_latency": 0
         }
+    
+    @property
+    def request_semaphore(self):
+        """Lazy initialize semaphore to avoid event loop issues"""
+        if self._request_semaphore is None:
+            self._request_semaphore = asyncio.Semaphore(20)
+        return self._request_semaphore
         
     def _initialize_clients(self):
         """Initialize available LLM clients based on configuration"""

@@ -56,6 +56,20 @@ case "$SERVICE_NAME" in
         echo "Starting Temporal worker with PostgreSQL persistence..."
         exec python -m src.orchestrator.worker_production_db
         ;;
+    marketing-worker)
+        # Parse TEMPORAL_HOST to extract hostname and port
+        TEMPORAL_HOST_VAR=${TEMPORAL_HOST:-temporal:7233}
+        if [[ "$TEMPORAL_HOST_VAR" == *":"* ]]; then
+            TEMPORAL_HOSTNAME=$(echo "$TEMPORAL_HOST_VAR" | cut -d':' -f1)
+            TEMPORAL_PORT_VAR=$(echo "$TEMPORAL_HOST_VAR" | cut -d':' -f2)
+        else
+            TEMPORAL_HOSTNAME="$TEMPORAL_HOST_VAR"
+            TEMPORAL_PORT_VAR=${TEMPORAL_PORT:-7233}
+        fi
+        wait_for_service "$TEMPORAL_HOSTNAME" "$TEMPORAL_PORT_VAR" "Temporal"
+        echo "Starting Marketing Temporal worker..."
+        exec python -m src.orchestrator.marketing_worker
+        ;;
     *)
         echo "Unknown service: $SERVICE_NAME"
         exit 1

@@ -37,19 +37,13 @@ router = APIRouter(prefix="/api/v2/marketing", tags=["marketing"])
 # Initialize services
 orchestrator = MarketingOrchestrator()
 
-# Temporal client singleton
-_temporal_client = None
-
 async def get_temporal_client():
-    """Get or create Temporal client"""
-    global _temporal_client
-    if _temporal_client is None:
-        from src.common.config import settings
-        _temporal_client = await Client.connect(
-            settings.TEMPORAL_HOST,
-            namespace=settings.TEMPORAL_NAMESPACE
-        )
-    return _temporal_client
+    """Create Temporal client"""
+    from src.common.config import settings
+    return await Client.connect(
+        settings.TEMPORAL_SERVER,
+        namespace=settings.TEMPORAL_NAMESPACE
+    )
 
 
 @router.post("/campaigns", response_model=Dict[str, Any])
@@ -67,8 +61,12 @@ async def create_campaign(
             objective=request.objective
         )
         
-        # Get Temporal client
-        temporal_client = await get_temporal_client()
+        # Create Temporal client directly without helper function
+        from src.common.config import settings
+        temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
         
         # Create workflow request
         workflow_request = MarketingWorkflowRequest(
@@ -93,7 +91,7 @@ async def create_campaign(
             MarketingWorkflow.run,
             workflow_request,
             id=workflow_id,
-            task_queue="marketing-queue",
+            task_queue="marketing-queue",  # Use dedicated marketing queue
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
         )
         
@@ -291,8 +289,12 @@ async def optimize_campaign(
             user_id=current_user["user_id"]
         )
         
-        # Get Temporal client
-        temporal_client = await get_temporal_client()
+        # Create Temporal client directly
+        from src.common.config import settings
+        temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
         
         # Start optimization workflow
         workflow_id = f"marketing-optimize-{campaign_id}-{datetime.now().timestamp()}"
@@ -300,7 +302,7 @@ async def optimize_campaign(
             CampaignOptimizationWorkflow.run,
             campaign_id,
             id=workflow_id,
-            task_queue="marketing-queue",
+            task_queue="marketing-queue",  # Use dedicated marketing queue
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
         )
         
@@ -350,8 +352,12 @@ async def generate_content(
             user_id=current_user["user_id"]
         )
         
-        # Get Temporal client
-        temporal_client = await get_temporal_client()
+        # Create Temporal client directly
+        from src.common.config import settings
+        temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
         
         # Start content generation workflow
         workflow_id = f"marketing-content-{datetime.now().timestamp()}"
@@ -366,7 +372,7 @@ async def generate_content(
                 [tone.value]
             ],
             id=workflow_id,
-            task_queue="marketing-queue",
+            task_queue="marketing-queue",  # Use dedicated marketing queue
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
         )
         
@@ -479,8 +485,12 @@ async def get_workflow_status(
 ):
     """Get status of a marketing workflow"""
     try:
-        # Get Temporal client
-        temporal_client = await get_temporal_client()
+        # Create Temporal client directly
+        from src.common.config import settings
+        temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
         
         # Get workflow handle
         handle = temporal_client.get_workflow_handle(workflow_id)
@@ -514,8 +524,12 @@ async def cancel_workflow(
 ):
     """Cancel a marketing workflow"""
     try:
-        # Get Temporal client
-        temporal_client = await get_temporal_client()
+        # Create Temporal client directly
+        from src.common.config import settings
+        temporal_client = await Client.connect(
+            settings.TEMPORAL_SERVER,
+            namespace=settings.TEMPORAL_NAMESPACE
+        )
         
         # Get workflow handle
         handle = temporal_client.get_workflow_handle(workflow_id)
