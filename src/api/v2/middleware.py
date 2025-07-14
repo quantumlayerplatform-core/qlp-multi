@@ -98,19 +98,39 @@ class RequestTrackingMiddleware(BaseHTTPMiddleware):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses"""
     
+    # Documentation endpoints that should skip this middleware
+    DOC_ENDPOINTS = ["/docs", "/redoc", "/openapi.json", "/api/v2/docs", "/api/v2/redoc", "/api/v2/openapi.json"]
+    
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Check if this is a documentation endpoint - skip middleware if so
+        is_doc_endpoint = any(request.url.path == endpoint for endpoint in self.DOC_ENDPOINTS)
+        
+        if is_doc_endpoint:
+            # Skip security headers for doc endpoints - they handle their own
+            return await call_next(request)
+        
         response = await call_next(request)
         
-        # Add security headers
+        # Add security headers for non-doc endpoints
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         
-        # Add CSP for API responses
         if request.url.path.startswith("/api"):
+            # Strict CSP for API endpoints
             response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none';"
+        else:
+            # Default CSP for other endpoints
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "font-src 'self'; "
+                "connect-src 'self';"
+            )
         
         return response
 
@@ -272,13 +292,18 @@ def setup_middleware(app):
     )
     
     # Security: CORS
+    import os
+    is_development = os.getenv("ENVIRONMENT", "development") == "development"
+    
+    allowed_origins = ["*"] if is_development else [
+        "https://app.quantumlayer.com",
+        "https://staging.quantumlayer.com",
+        "http://localhost:3000"
+    ]
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "https://app.quantumlayer.com",
-            "https://staging.quantumlayer.com",
-            "http://localhost:3000"  # Development
-        ],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],

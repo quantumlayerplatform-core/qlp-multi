@@ -2003,19 +2003,193 @@ class QLPWorkflow:
         return result
 
 
-# Import push_to_github_activity from main.py where it's already defined
-try:
-    from src.orchestrator.main import push_to_github_activity
-    logger.info("Successfully imported push_to_github_activity from main.py")
-except ImportError as e:
-    logger.error(f"Failed to import push_to_github_activity from main.py: {e}")
-    # Define it here as fallback
-    @activity.defn
-    async def push_to_github_activity(params: Dict[str, Any]) -> Dict[str, Any]:
-        """Push capsule to GitHub with enterprise structure - Fallback implementation"""
+# Define push_to_github_activity directly here
+@activity.defn
+async def push_to_github_activity(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Push capsule to GitHub with enterprise structure"""
+    try:
+        # Handle both capsule dict and capsule_id
+        capsule_dict = params.get("capsule")
+        capsule_id = params.get("capsule_id")
+        
+        if not capsule_dict and not capsule_id:
+            return {
+                "success": False,
+                "error": "Either 'capsule' or 'capsule_id' is required"
+            }
+        
+        github_token = params.get("github_token")
+        repo_name = params.get("repo_name")
+        private = params.get("private", False)
+        use_enterprise = params.get("use_enterprise", True)
+        
+        # Use environment token if not provided
+        if not github_token:
+            import os
+            github_token = os.getenv("GITHUB_TOKEN")
+            if not github_token:
+                activity.logger.warning("GitHub token not found in params or environment")
+                return {
+                    "success": False,
+                    "error": "GitHub token required in metadata or GITHUB_TOKEN environment variable"
+                }
+        
+        # Import GitHub integration
+        from src.orchestrator.enhanced_github_integration import EnhancedGitHubIntegration
+        from src.orchestrator.github_integration_v2 import GitHubIntegrationV2
+        from src.common.models import QLCapsule
+        from src.common.database import get_db
+        from sqlalchemy.orm import Session
+        import json
+        
+        # If only capsule_id is provided, fetch from database
+        if capsule_id and not capsule_dict:
+            activity.logger.info(f"Fetching capsule {capsule_id} from database")
+            
+            # Create a database session
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            import os
+            
+            DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://qlp_user:qlp_password@postgres:5432/qlp_db")
+            engine = create_engine(DATABASE_URL)
+            SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            
+            db: Session = SessionLocal()
+            try:
+                # Query the capsule
+                from sqlalchemy import text
+                result = db.execute(
+                    text("SELECT * FROM capsules WHERE id = :capsule_id"),
+                    {"capsule_id": capsule_id}
+                ).fetchone()
+                
+                if not result:
+                    return {
+                        "success": False,
+                        "error": f"Capsule {capsule_id} not found in database"
+                    }
+                
+                # Convert row to dict
+                row_dict = dict(result._mapping)
+                
+                # Parse JSON fields with type checking
+                def safe_json_loads(value):
+                    """Safely parse JSON, handling both strings and already-parsed dicts"""
+                    if value is None:
+                        return None
+                    if isinstance(value, dict):
+                        return value
+                    if isinstance(value, str) and value:
+                        try:
+                            return json.loads(value)
+                        except json.JSONDecodeError as e:
+                            activity.logger.error(f"JSON decode error: {e}, value type: {type(value)}, value: {value[:100]}")
+                            raise
+                    return {}
+                
+                # Debug logging to trace the error
+                activity.logger.info(f"Row dict keys: {list(row_dict.keys())}")
+                for key in ["manifest", "source_code", "tests", "validation_report", "deployment_config", "meta_data"]:
+                    if key in row_dict:
+                        value = row_dict[key]
+                        activity.logger.info(f"Column {key}: type={type(value)}, is_dict={isinstance(value, dict)}, is_str={isinstance(value, str)}")
+                
+                # Handle documentation field specially - it might be a JSON dict
+                documentation = row_dict["documentation"]
+                if isinstance(documentation, dict):
+                    # If it's a dict, try to extract meaningful content
+                    if 'content' in documentation:
+                        documentation = documentation['content']
+                    elif 'code' in documentation:
+                        documentation = documentation['code']
+                    elif 'text' in documentation:
+                        documentation = documentation['text']
+                    else:
+                        # Convert the dict to JSON string
+                        documentation = json.dumps(documentation, indent=2)
+                elif documentation is None:
+                    documentation = ""
+                else:
+                    documentation = str(documentation)
+                
+                capsule_dict = {
+                    "id": str(row_dict["id"]),  # Ensure ID is string
+                    "request_id": row_dict["request_id"],
+                    "manifest": safe_json_loads(row_dict["manifest"]) or {},
+                    "source_code": safe_json_loads(row_dict["source_code"]) or {},
+                    "tests": safe_json_loads(row_dict["tests"]) or {},
+                    "documentation": documentation,
+                    "validation_report": safe_json_loads(row_dict["validation_report"]),
+                    "deployment_config": safe_json_loads(row_dict["deployment_config"]) or {},
+                    "metadata": safe_json_loads(row_dict["meta_data"]) or {},
+                    "created_at": row_dict["created_at"].isoformat() if row_dict["created_at"] else None,
+                    "updated_at": row_dict["updated_at"].isoformat() if row_dict.get("updated_at") else None
+                }
+                
+                activity.logger.info(f"Successfully fetched capsule {capsule_id} from database")
+                
+            except Exception as e:
+                activity.logger.error(f"Error fetching capsule from database: {str(e)}", exc_info=True)
+                raise
+            finally:
+                db.close()
+        
+        # Convert dict back to QLCapsule object if needed
+        if isinstance(capsule_dict, dict):
+            try:
+                # Log the dict before creating QLCapsule
+                activity.logger.info("Creating QLCapsule from dict")
+                for key, value in capsule_dict.items():
+                    if key in ["manifest", "source_code", "tests", "validation_report", "deployment_config", "metadata"]:
+                        activity.logger.info(f"Field {key}: type={type(value)}, is_dict={isinstance(value, dict)}")
+                
+                capsule = QLCapsule(**capsule_dict)
+                activity.logger.info("QLCapsule created successfully")
+            except Exception as e:
+                activity.logger.error(f"Error creating QLCapsule: {str(e)}", exc_info=True)
+                # Log the problematic data
+                for key, value in capsule_dict.items():
+                    activity.logger.error(f"capsule_dict[{key}] = {type(value)}: {str(value)[:100]}")
+                raise
+        else:
+            capsule = capsule_dict
+        
+        # Generate repo name if not provided
+        if not repo_name:
+            project_name = capsule.manifest.get("name", f"qlp-project-{capsule.id[:8]}")
+            repo_name = project_name.lower().replace(" ", "-").replace("_", "-")
+        
+        # Choose integration based on preference
+        if use_enterprise:
+            github = EnhancedGitHubIntegration(github_token)
+        else:
+            github = GitHubIntegrationV2(github_token)
+        
+        # Push to GitHub
+        result = await github.push_capsule_atomic(
+            capsule=capsule,
+            repo_name=repo_name,
+            private=private,
+            use_intelligent_structure=use_enterprise
+        )
+        
+        activity.logger.info(f"Successfully pushed capsule to GitHub: {result['repository_url']}")
+        
+        return {
+            "success": True,
+            "repository_url": result["repository_url"],
+            "clone_url": result["clone_url"],
+            "ssh_url": result["ssh_url"],
+            "files_created": result["files_created"],
+            "pushed_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        activity.logger.error(f"Failed to push to GitHub: {str(e)}")
         return {
             "success": False,
-            "error": "GitHub push activity not available"
+            "error": str(e)
         }
 
 

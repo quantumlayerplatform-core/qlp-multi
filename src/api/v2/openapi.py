@@ -264,22 +264,55 @@ def setup_documentation(app: FastAPI):
     
     @app.get("/api/v2/docs", include_in_schema=False)
     async def custom_swagger_ui_html():
-        return get_swagger_ui_html(
+        from fastapi.responses import HTMLResponse
+        
+        html_content = get_swagger_ui_html(
             openapi_url="/api/v2/openapi.json",
             title="QLP API v2 - Swagger UI",
             swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
             swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
             swagger_favicon_url="https://quantumlayer.com/favicon.ico"
         )
+        
+        # Create custom response with proper CSP headers
+        response = HTMLResponse(content=html_content.body.decode())
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+            "img-src 'self' data: https: blob:; "
+            "font-src 'self' data: https://cdn.jsdelivr.net https://unpkg.com; "
+            "connect-src 'self' http://localhost:* https://api.quantumlayer.com;"
+        )
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        
+        return response
     
     @app.get("/api/v2/redoc", include_in_schema=False)
     async def redoc_html():
-        return get_redoc_html(
+        from fastapi.responses import HTMLResponse
+        
+        html_content = get_redoc_html(
             openapi_url="/api/v2/openapi.json",
             title="QLP API v2 - ReDoc",
             redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@2.0.0/bundles/redoc.standalone.js",
             redoc_favicon_url="https://quantumlayer.com/favicon.ico"
         )
+        
+        # Create custom response with proper CSP headers
+        response = HTMLResponse(content=html_content.body.decode())
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+            "img-src 'self' data: https: blob:; "
+            "font-src 'self' data: https://cdn.jsdelivr.net https://unpkg.com; "
+            "connect-src 'self' http://localhost:* https://api.quantumlayer.com; "
+            "worker-src 'self' blob:;"  # ReDoc needs worker-src for blob: URLs
+        )
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        
+        return response
     
     @app.get("/api/v2/openapi.json", include_in_schema=False)
     async def openapi_json():
