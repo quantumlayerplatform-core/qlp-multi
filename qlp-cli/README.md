@@ -35,6 +35,10 @@ qlp from-image architecture-diagram.png
 - 🐳 **Docker Ready** - Containerization out of the box
 - 🚢 **Auto Deploy** - Direct deployment to AWS/Azure/GCP
 - 🐙 **GitHub Integration** - Push to GitHub automatically
+- 🧠 **Chain of Thought** - See AI reasoning process in real-time
+- 📝 **Live Preview** - Preview generated code before creation
+- 💰 **Cost Tracking** - See estimated and actual generation costs
+- 🔍 **Validation Tools** - Verify generated code quality
 
 ## Examples
 
@@ -56,6 +60,16 @@ qlp generate "Serverless API for image processing" --deploy aws
 ### Push to GitHub
 ```bash
 qlp generate "Discord bot with moderation features" --github
+```
+
+### Show AI Reasoning
+```bash
+qlp generate "E-commerce API" --show-reasoning
+```
+
+### Live Preview
+```bash
+qlp generate "Task management app" --preview
 ```
 
 ## Interactive Mode
@@ -110,6 +124,9 @@ export QLP_API_KEY=your-api-key
 - `watch` - Watch for TODO comments
 - `stats` - View statistics
 - `config` - Manage configuration
+- `validate` - Validate a generated capsule
+- `inspect` - Inspect capsule contents and metadata
+- `check-github` - Check GitHub repository created by QuantumLayer
 
 ### Command Options
 
@@ -118,8 +135,10 @@ export QLP_API_KEY=your-api-key
 - `--output, -o` - Output directory
 - `--deploy` - Deploy to cloud (aws, azure, gcp)
 - `--github` - Push to GitHub automatically
-- `--timeout, -t` - Timeout in minutes (default: 30)
+- `--timeout, -t` - Timeout in minutes (default: 10)
 - `--dry-run` - Preview without generating
+- `--show-reasoning, -r` - Display AI reasoning process
+- `--preview, -p` - Show live code preview before generation
 
 #### Status Command
 ```bash

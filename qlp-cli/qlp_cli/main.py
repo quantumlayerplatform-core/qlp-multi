@@ -75,9 +75,11 @@ def cli(ctx, api_url: Optional[str], api_key: Optional[str]):
 @click.option('--github', is_flag=True, help='Push to GitHub after generation')
 @click.option('--dry-run', is_flag=True, help='Preview what would be generated')
 @click.option('--timeout', '-t', type=int, default=10, help='Timeout in minutes (default: 10)')
+@click.option('--show-reasoning', '-r', is_flag=True, help='Show AI reasoning process')
+@click.option('--preview', '-p', is_flag=True, help='Show live code preview before generation')
 @click.pass_context
 def generate(ctx, description: str, language: str, output: Optional[str], 
-             deploy: Optional[str], github: bool, dry_run: bool, timeout: int):
+             deploy: Optional[str], github: bool, dry_run: bool, timeout: int, show_reasoning: bool, preview: bool):
     """Generate a complete project from natural language description"""
     
     # Validate description
@@ -108,22 +110,46 @@ def generate(ctx, description: str, language: str, output: Optional[str],
         padding=(1, 2)
     ))
     
+    # Show reasoning if requested
+    if show_reasoning:
+        from .chain_of_thought import generate_reasoning_chain, display_reasoning_live, create_reasoning_summary
+        
+        console.print("\n[bold cyan]🧠 AI Reasoning Process[/]\n")
+        
+        # Generate and display reasoning chain
+        chain = generate_reasoning_chain(description, language)
+        asyncio.run(display_reasoning_live(chain, delay=0.5))
+        
+        # Show summary
+        console.print("\n")
+        console.print(create_reasoning_summary(chain))
+        console.print("\n")
+    
+    # Show preview if requested
+    if preview:
+        from .preview import show_live_preview
+        
+        proceed = asyncio.run(show_live_preview(description, language))
+        if not proceed:
+            console.print("[yellow]Generation cancelled.[/]")
+            return
+    
     if dry_run:
         console.print("\n[yellow]This is a dry run. No files will be generated.[/]")
         return
     
-    # Confirm if needed
-    if not Confirm.ask("\nProceed with generation?", default=True):
+    # Confirm if needed (skip if preview was already shown and confirmed)
+    if not preview and not Confirm.ask("\nProceed with generation?", default=True):
         console.print("[yellow]Generation cancelled.[/]")
         return
     
     # Run async generation
     client = ctx.obj['client']
-    asyncio.run(_generate_async(client, description, language, output, deploy, github, timeout))
+    asyncio.run(_generate_async(client, description, language, output, deploy, github, timeout, show_reasoning))
 
 
 async def _generate_async(client: QLPClient, description: str, language: str, 
-                         output: Optional[str], deploy: Optional[str], github: bool, timeout: int = 30):
+                         output: Optional[str], deploy: Optional[str], github: bool, timeout: int = 30, show_reasoning: bool = False):
     """Async implementation of generation"""
     
     workflow_id = None
