@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Activity timeout configurations
 ACTIVITY_TIMEOUT = timedelta(minutes=10)  # Increased from 5 to 10 minutes
 LONG_ACTIVITY_TIMEOUT = timedelta(minutes=45)  # Increased from 30 to 45 minutes
-HEARTBEAT_TIMEOUT = timedelta(seconds=60)  # Increased from 30 to 60 seconds
+HEARTBEAT_TIMEOUT = timedelta(minutes=5)  # Increased from 60 seconds to 5 minutes for production stability
 
 # Retry policy for activities
 DEFAULT_RETRY_POLICY = RetryPolicy(
@@ -120,6 +120,9 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
     from ..moderation import check_content, CheckContext, Severity
     
     activity.logger.info(f"Decomposing request: {request['request_id']}")
+    
+    # Send initial heartbeat
+    activity.heartbeat("Starting request decomposition")
     
     # HAP Content Check
     hap_result = await check_content(
@@ -1037,6 +1040,9 @@ async def create_ql_capsule_activity(
     deployment_config = {}
     
     for i, (task, result) in enumerate(zip(tasks, results)):
+        # Send heartbeat for each task processing
+        activity.heartbeat(f"Processing task {i+1} of {len(tasks)}")
+        
         # Handle both direct result format and nested execution format
         execution_data = result if "status" in result else result.get("execution", {})
         
@@ -1164,6 +1170,9 @@ async def create_ql_capsule_activity(
         activity.logger.info("DEBUG: No files created, trying fallback")
         # Find first available code
         for i, (task, result) in enumerate(zip(tasks, results)):
+            # Send heartbeat for each task processing in second loop
+            activity.heartbeat(f"Processing fallback for task {i+1} of {len(tasks)}")
+            
             # Handle both direct result format and nested execution format
             execution_data = result if "status" in result else result.get("execution", {})
             

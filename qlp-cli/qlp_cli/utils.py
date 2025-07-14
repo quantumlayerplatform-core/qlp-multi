@@ -162,3 +162,80 @@ def create_progress_message(stage: str, detail: str = "") -> str:
         message += f" - {detail}"
     
     return message
+
+
+# Thought bubbles for different stages
+THOUGHT_BUBBLES = {
+    "analyzing": [
+        "🤔 Understanding your requirements...",
+        "📝 Breaking down the project structure...",
+        "🧩 Identifying key components...",
+        "🎯 Planning the implementation approach...",
+        "🔍 Analyzing dependencies and integrations..."
+    ],
+    "generating": [
+        "⚡ Generating production-ready code...",
+        "🏗️ Building the architecture...",
+        "✨ Crafting elegant solutions...",
+        "🔧 Implementing best practices...",
+        "📦 Creating modular components..."
+    ],
+    "validating": [
+        "🧪 Running comprehensive tests...",
+        "✅ Validating code quality...",
+        "🔒 Checking security patterns...",
+        "📊 Analyzing performance metrics...",
+        "🎨 Ensuring code style consistency..."
+    ],
+    "packaging": [
+        "📦 Packaging your project...",
+        "🎁 Preparing deliverables...",
+        "📄 Generating documentation...",
+        "🚀 Finalizing deployment configs...",
+        "🎉 Almost there..."
+    ]
+}
+
+
+def get_random_thought(stage: str) -> str:
+    """Get a random thought bubble for the current stage"""
+    thoughts = THOUGHT_BUBBLES.get(stage.lower(), ["🤖 Processing..."])
+    return random.choice(thoughts)
+
+
+def format_cost(cost_usd: float) -> str:
+    """Format cost in USD with color coding"""
+    if cost_usd < 0.10:
+        return f"[green]${cost_usd:.3f}[/]"
+    elif cost_usd < 0.50:
+        return f"[yellow]${cost_usd:.3f}[/]"
+    else:
+        return f"[red]${cost_usd:.3f}[/]"
+
+
+def estimate_cost(description: str, language: str = "auto") -> float:
+    """Estimate generation cost based on complexity"""
+    # Base cost estimation
+    word_count = len(description.split())
+    
+    # Complexity factors
+    base_cost = 0.02  # Base cost per generation
+    word_factor = word_count * 0.001  # Cost per word
+    
+    # Language complexity multipliers
+    language_multipliers = {
+        "python": 1.0,
+        "javascript": 1.1,
+        "typescript": 1.2,
+        "go": 1.3,
+        "java": 1.4,
+        "auto": 1.1
+    }
+    
+    lang_multiplier = language_multipliers.get(language.lower(), 1.1)
+    
+    # Calculate total
+    estimated_cost = (base_cost + word_factor) * lang_multiplier
+    
+    # Cap at reasonable maximum
+    return min(estimated_cost, 2.0)

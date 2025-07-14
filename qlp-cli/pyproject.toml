@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantumlayer"
+version = "0.1.0"
+description = "Build complete software systems from natural language"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "QuantumLayer", email = "team@quantumlayer.ai"},
+]
+maintainers = [
+    {name = "QuantumLayer", email = "team@quantumlayer.ai"},
+]
+keywords = ["ai", "code-generation", "development-tools", "cli", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://quantumlayer.ai"
+Documentation = "https://docs.quantumlayer.ai"
+Repository = "https://github.com/quantumlayer/qlp-cli"
+"Bug Tracker" = "https://github.com/quantumlayer/qlp-cli/issues"
+Discord = "https://discord.gg/quantumlayer"
+
+[project.scripts]
+qlp = "qlp_cli.main:cli"
+quantumlayer = "qlp_cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["qlp_cli*"]
+exclude = ["tests*", "docs*", "examples*", "generated*"]
+
+[tool.setuptools.package-data]
+qlp_cli = ["templates/*.json"]

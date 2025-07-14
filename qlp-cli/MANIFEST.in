@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+recursive-include qlp_cli/templates *.json
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude tests *
+exclude test_*.py
+exclude run_cli.py
+exclude debug_workflow.py
+exclude install_dev.sh
+exclude test_cli_simple.sh
+exclude demo.md
+prune generated
+prune examples

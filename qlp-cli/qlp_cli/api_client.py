@@ -108,11 +108,21 @@ class QLPClient:
                         
                         # Handle completed workflow
                         if status == 'completed':
+                            # Extract result
+                            result = data.get('result', {})
+                            
+                            # Check if workflow actually failed
+                            if isinstance(result, dict):
+                                workflow_status = result.get('status', 'unknown')
+                                if workflow_status == 'failed':
+                                    errors = result.get('errors', [])
+                                    error_msg = errors[0]['message'] if errors else 'Workflow execution failed'
+                                    tasks_info = f" (completed {result.get('tasks_completed', 0)}/{result.get('tasks_total', 0)} tasks)"
+                                    raise GenerationError(f"{error_msg}{tasks_info}")
+                            
                             if progress and task is not None:
                                 progress.update(task, completed=100, description="Generation complete!")
                             
-                            # Extract result
-                            result = data.get('result', {})
                             if isinstance(result, dict) and 'capsule_id' in result:
                                 return {
                                     'status': 'completed',
@@ -125,17 +135,29 @@ class QLPClient:
                         # Handle running workflow
                         elif status == 'running':
                             if progress and task is not None:
+                                # Import thought bubble function
+                                from .utils import get_random_thought
+                                
                                 # Get workflow result if available
                                 result = data.get('result', {}) if isinstance(data.get('result'), dict) else {}
                                 
                                 # Try to extract task information
                                 tasks_completed = result.get('tasks_completed', 0)
                                 tasks_total = result.get('tasks_total', 0)
+                                current_stage = result.get('current_stage', 'generating')
+                                
+                                # Get a thought bubble every 10 seconds (5 polls)
+                                if attempt % 5 == 0:
+                                    thought = get_random_thought(current_stage)
+                                else:
+                                    thought = None
                                 
                                 # If we have task info, use it
                                 if tasks_total > 0:
                                     progress_pct = min(90, (tasks_completed / tasks_total) * 90 + 10)
                                     status_msg = f"Processing... ({tasks_completed}/{tasks_total} tasks)"
+                                    if thought:
+                                        status_msg = f"💭 {thought}"
                                 else:
                                     # Otherwise, use time-based estimate
                                     elapsed_seconds = attempt * 2
@@ -152,6 +174,8 @@ class QLPClient:
                                         progress_pct = 80 + min(10, (elapsed_minutes - 5) * 2)  # 80-90% after 5 minutes
                                     
                                     status_msg = f"Workflow running... ({elapsed_minutes:.1f}m elapsed)"
+                                    if thought:
+                                        status_msg = f"💭 {thought}"
                                 
                                 progress.update(
                                     task, 

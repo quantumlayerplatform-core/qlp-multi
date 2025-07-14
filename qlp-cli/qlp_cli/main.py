@@ -26,7 +26,10 @@ from .utils import (
     format_time,
     get_random_tip,
     validate_description,
-    ensure_config
+    ensure_config,
+    get_random_thought,
+    format_cost,
+    estimate_cost
 )
 from .config import Config
 
@@ -82,15 +85,27 @@ def generate(ctx, description: str, language: str, output: Optional[str],
         console.print("[red]Error:[/] Description too short. Please provide more detail.")
         return
     
-    # Show what we're about to do
+    # Estimate cost
+    estimated_cost = estimate_cost(description, language)
+    
+    # Show what we're about to do with enhanced formatting
+    request_table = Table(show_header=False, box=None)
+    request_table.add_column(style="bold cyan", width=15)
+    request_table.add_column(style="white")
+    
+    request_table.add_row("Project", description)
+    request_table.add_row("Language", language)
+    request_table.add_row("Output", output or './generated')
+    request_table.add_row("Deploy", deploy or 'none')
+    request_table.add_row("GitHub", '✅ Yes' if github else '❌ No')
+    request_table.add_row("Est. Cost", format_cost(estimated_cost))
+    request_table.add_row("Est. Time", f"{timeout} minutes")
+    
     console.print(Panel(
-        f"[bold cyan]Project:[/] {description}\n"
-        f"[bold cyan]Language:[/] {language}\n"
-        f"[bold cyan]Output:[/] {output or './generated'}\n"
-        f"[bold cyan]Deploy:[/] {deploy or 'none'}\n"
-        f"[bold cyan]GitHub:[/] {'yes' if github else 'no'}",
+        request_table,
         title="🚀 Generation Request",
-        border_style="cyan"
+        border_style="cyan",
+        padding=(1, 2)
     ))
     
     if dry_run:
@@ -228,8 +243,14 @@ def _show_generation_results(result: dict, output_path: str):
     
     table.add_row("Capsule ID", result.get('capsule_id', 'N/A'))
     table.add_row("Files Generated", str(total_files))
-    table.add_row("Execution Time", f"{result.get('execution_time', 0):.1f}s")
+    table.add_row("Execution Time", format_time(result.get('execution_time', 0)))
     table.add_row("Tasks Completed", f"{result.get('tasks_completed', 0)}/{result.get('tasks_total', 0)}")
+    
+    # Add cost if available
+    cost = metadata.get('total_cost', 0)
+    if cost > 0:
+        table.add_row("Total Cost", format_cost(cost))
+    
     table.add_row("Output Path", output_path)
     
     console.print(table)
@@ -486,6 +507,278 @@ def _show_leaderboard():
         table.add_row(rank, dev, projects, lines)
     
     console.print(table)
+
+
+@cli.command()
+@click.argument('capsule_id')
+@click.option('--detailed', '-d', is_flag=True, help='Show detailed validation results')
+@click.pass_context
+def validate(ctx, capsule_id: str, detailed: bool):
+    """Validate a generated capsule"""
+    
+    client = ctx.obj['client']
+    
+    try:
+        asyncio.run(_validate_capsule(client, capsule_id, detailed))
+    except Exception as e:
+        console.print(f"[red]Error validating capsule:[/] {e}")
+        sys.exit(1)
+
+
+async def _validate_capsule(client: QLPClient, capsule_id: str, detailed: bool):
+    """Validate capsule implementation"""
+    
+    with console.status("Validating capsule..."):
+        # Get capsule details
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.get(
+                f"{client.base_url}/capsule/{capsule_id}",
+                headers=client.headers
+            )
+            
+            if response.status_code != 200:
+                console.print(f"[red]Capsule not found:[/] {capsule_id}")
+                return
+            
+            capsule_data = response.json()
+    
+    # Display validation results
+    validation_info = capsule_data.get('validation', {})
+    
+    if not validation_info:
+        console.print("[yellow]No validation data available for this capsule[/]")
+        return
+    
+    # Create validation summary
+    status = validation_info.get('overall_status', 'unknown')
+    confidence = validation_info.get('confidence_score', 0)
+    
+    # Status emoji and color
+    status_display = {
+        'passed': ('✅', 'green', 'All Checks Passed'),
+        'failed': ('❌', 'red', 'Validation Failed'),
+        'passed_with_warnings': ('⚠️', 'yellow', 'Passed with Warnings')
+    }
+    
+    emoji, color, message = status_display.get(status, ('❓', 'white', 'Unknown'))
+    
+    # Summary panel
+    summary_table = Table(show_header=False, box=None)
+    summary_table.add_column(style="cyan", width=20)
+    summary_table.add_column(style=color)
+    
+    summary_table.add_row("Status", f"{emoji} {message}")
+    summary_table.add_row("Confidence", f"{confidence:.1%}")
+    summary_table.add_row("Capsule ID", capsule_id)
+    
+    console.print(Panel(
+        summary_table,
+        title="[bold]🧪 Validation Summary[/]",
+        border_style=color
+    ))
+    
+    # Detailed checks if requested
+    if detailed and 'checks' in validation_info:
+        checks = validation_info['checks']
+        
+        check_table = Table(title="Detailed Validation Checks")
+        check_table.add_column("Check", style="cyan")
+        check_table.add_column("Status", justify="center")
+        check_table.add_column("Details", style="dim")
+        
+        for check in checks:
+            check_name = check.get('name', 'Unknown')
+            check_passed = check.get('passed', False)
+            check_status = '✅' if check_passed else '❌'
+            check_details = check.get('message', '')
+            
+            check_table.add_row(check_name, check_status, check_details)
+        
+        console.print("\n")
+        console.print(check_table)
+
+
+@cli.command()
+@click.argument('capsule_id')
+@click.option('--files', '-f', is_flag=True, help='List all files in capsule')
+@click.option('--metadata', '-m', is_flag=True, help='Show capsule metadata')
+@click.pass_context
+def inspect(ctx, capsule_id: str, files: bool, metadata: bool):
+    """Inspect a capsule's contents and metadata"""
+    
+    client = ctx.obj['client']
+    
+    try:
+        asyncio.run(_inspect_capsule(client, capsule_id, files, metadata))
+    except Exception as e:
+        console.print(f"[red]Error inspecting capsule:[/] {e}")
+        sys.exit(1)
+
+
+async def _inspect_capsule(client: QLPClient, capsule_id: str, show_files: bool, show_metadata: bool):
+    """Inspect capsule implementation"""
+    
+    with console.status("Loading capsule details..."):
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.get(
+                f"{client.base_url}/capsule/{capsule_id}",
+                headers=client.headers
+            )
+            
+            if response.status_code != 200:
+                console.print(f"[red]Capsule not found:[/] {capsule_id}")
+                return
+            
+            capsule_data = response.json()
+    
+    # Basic info
+    info_table = Table(show_header=False, box=None)
+    info_table.add_column(style="cyan", width=20)
+    info_table.add_column(style="white")
+    
+    info_table.add_row("Capsule ID", capsule_id)
+    info_table.add_row("Status", capsule_data.get('status', 'unknown'))
+    info_table.add_row("Created", capsule_data.get('created_at', 'N/A'))
+    
+    # Extract metadata
+    metadata_obj = capsule_data.get('metadata', {})
+    capsule_info = metadata_obj.get('capsule_info', {})
+    
+    if capsule_info:
+        info_table.add_row("Language", capsule_info.get('language', 'auto'))
+        info_table.add_row("Framework", capsule_info.get('framework', 'N/A'))
+        
+        # Count files
+        files_info = capsule_info.get('files', {})
+        total_files = sum(len(files) for files in files_info.values())
+        info_table.add_row("Total Files", str(total_files))
+    
+    console.print(Panel(
+        info_table,
+        title="[bold]📦 Capsule Information[/]",
+        border_style="blue"
+    ))
+    
+    # Show files if requested
+    if show_files and capsule_info and 'files' in capsule_info:
+        files_info = capsule_info['files']
+        
+        console.print("\n[bold]📁 File Structure:[/]\n")
+        
+        for category, file_list in files_info.items():
+            if file_list:
+                console.print(f"[cyan]{category}/[/]")
+                for file in sorted(file_list):
+                    console.print(f"  📄 {file}")
+                console.print()
+    
+    # Show metadata if requested
+    if show_metadata:
+        console.print("\n[bold]📊 Metadata:[/]\n")
+        console.print(Syntax(
+            json.dumps(metadata_obj, indent=2),
+            "json",
+            theme="monokai"
+        ))
+
+
+@cli.command()
+@click.argument('repo_url')
+@click.option('--validate', '-v', is_flag=True, help='Validate the repository contents')
+@click.pass_context 
+def check_github(ctx, repo_url: str, validate: bool):
+    """Check a GitHub repository created by QuantumLayer"""
+    
+    client = ctx.obj['client']
+    
+    try:
+        asyncio.run(_check_github_repo(client, repo_url, validate))
+    except Exception as e:
+        console.print(f"[red]Error checking GitHub repo:[/] {e}")
+        sys.exit(1)
+
+
+async def _check_github_repo(client: QLPClient, repo_url: str, validate: bool):
+    """Check GitHub repository implementation"""
+    
+    # Parse GitHub URL
+    import re
+    match = re.match(r'https://github.com/([^/]+)/([^/]+)', repo_url)
+    if not match:
+        console.print("[red]Invalid GitHub URL format[/]")
+        console.print("Expected: https://github.com/owner/repo")
+        return
+    
+    owner, repo = match.groups()
+    repo = repo.rstrip('.git')
+    
+    with console.status(f"Checking repository {owner}/{repo}..."):
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            # Check if repo exists using GitHub API
+            response = await http_client.get(
+                f"https://api.github.com/repos/{owner}/{repo}",
+                headers={"Accept": "application/vnd.github.v3+json"}
+            )
+            
+            if response.status_code == 404:
+                console.print(f"[red]Repository not found:[/] {owner}/{repo}")
+                return
+            elif response.status_code != 200:
+                console.print(f"[red]GitHub API error:[/] {response.status_code}")
+                return
+            
+            repo_data = response.json()
+    
+    # Display repository info
+    info_table = Table(show_header=False, box=None)
+    info_table.add_column(style="cyan", width=20)
+    info_table.add_column(style="white")
+    
+    info_table.add_row("Repository", f"{owner}/{repo}")
+    info_table.add_row("Description", repo_data.get('description', 'No description'))
+    info_table.add_row("Language", repo_data.get('language', 'Unknown'))
+    info_table.add_row("Stars", str(repo_data.get('stargazers_count', 0)))
+    info_table.add_row("Created", repo_data.get('created_at', 'Unknown'))
+    info_table.add_row("Last Updated", repo_data.get('updated_at', 'Unknown'))
+    info_table.add_row("Default Branch", repo_data.get('default_branch', 'main'))
+    
+    console.print(Panel(
+        info_table,
+        title="[bold]🐙 GitHub Repository[/]",
+        border_style="blue"
+    ))
+    
+    # Check for QuantumLayer metadata
+    with console.status("Checking for QuantumLayer metadata..."):
+        # Try to fetch qlp-metadata.json
+        metadata_response = await http_client.get(
+            f"https://raw.githubusercontent.com/{owner}/{repo}/{repo_data.get('default_branch', 'main')}/qlp-metadata.json"
+        )
+        
+        if metadata_response.status_code == 200:
+            console.print("\n[green]✅ QuantumLayer metadata found![/]")
+            
+            if validate:
+                metadata = metadata_response.json()
+                
+                # Show generation info
+                gen_table = Table(title="Generation Details", show_header=False)
+                gen_table.add_column(style="cyan")
+                gen_table.add_column(style="white")
+                
+                gen_table.add_row("Capsule ID", metadata.get('capsule_id', 'Unknown'))
+                gen_table.add_row("Generated At", metadata.get('generated_at', 'Unknown'))
+                gen_table.add_row("Platform Version", metadata.get('platform_version', 'Unknown'))
+                
+                console.print("\n")
+                console.print(gen_table)
+        else:
+            console.print("\n[yellow]⚠️  No QuantumLayer metadata found[/]")
+            console.print("[dim]This may not be a QuantumLayer-generated repository[/]")
+    
+    # Show repository structure
+    console.print(f"\n[bold]View repository:[/] {repo_url}")
+    console.print(f"[bold]Clone:[/] git clone {repo_url}.git")
 
 
 @cli.command()

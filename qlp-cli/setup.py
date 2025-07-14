@@ -2,8 +2,11 @@
 QuantumLayer CLI - Build entire systems with one command
 """
 from setuptools import setup, find_packages
+import os
 
-with open("README.md", "r", encoding="utf-8") as fh:
+# Read the README file
+here = os.path.abspath(os.path.dirname(__file__))
+with open(os.path.join(here, "README.md"), "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
@@ -18,19 +21,24 @@ setup(
     project_urls={
         "Bug Tracker": "https://github.com/quantumlayer/qlp-cli/issues",
         "Documentation": "https://docs.quantumlayer.ai",
+        "Homepage": "https://quantumlayer.ai",
+        "Discord": "https://discord.gg/quantumlayer",
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
+        "Environment :: Console",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Code Generators",
         "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests*", "docs*", "examples*", "generated*"]),
     python_requires=">=3.8",
     install_requires=[
         "click>=8.1.0",
@@ -51,4 +59,6 @@ setup(
     package_data={
         "qlp_cli": ["templates/*.json"],
     },
+    keywords="ai code-generation development-tools cli automation",
+    license="MIT",
 )
