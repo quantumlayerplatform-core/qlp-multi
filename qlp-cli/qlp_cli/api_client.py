@@ -141,41 +141,64 @@ class QLPClient:
                                 # Get workflow result if available
                                 result = data.get('result', {}) if isinstance(data.get('result'), dict) else {}
                                 
-                                # Try to extract task information
+                                # Try to extract detailed activity information
                                 tasks_completed = result.get('tasks_completed', 0)
                                 tasks_total = result.get('tasks_total', 0)
                                 current_stage = result.get('current_stage', 'generating')
+                                current_activity = result.get('current_activity', '')
+                                current_task = result.get('current_task', '')
                                 
-                                # Get a thought bubble every 10 seconds (5 polls)
-                                if attempt % 5 == 0:
+                                # Get a thought bubble every 6 seconds (3 polls)
+                                if attempt % 3 == 0:
                                     thought = get_random_thought(current_stage)
                                 else:
                                     thought = None
                                 
-                                # If we have task info, use it
-                                if tasks_total > 0:
-                                    progress_pct = min(90, (tasks_completed / tasks_total) * 90 + 10)
-                                    status_msg = f"Processing... ({tasks_completed}/{tasks_total} tasks)"
-                                    if thought:
-                                        status_msg = f"💭 {thought}"
-                                else:
-                                    # Otherwise, use time-based estimate
-                                    elapsed_seconds = attempt * 2
-                                    elapsed_minutes = elapsed_seconds / 60
+                                # Build status message with activity details
+                                if current_activity:
+                                    # Show actual Temporal activity
+                                    activity_map = {
+                                        'analyze_request_activity': '🔍 Analyzing your request...',
+                                        'decompose_tasks_activity': '📋 Breaking down into tasks...',
+                                        'create_ql_capsule_activity': '⚡ Generating code...',
+                                        'validate_capsule_activity': '🧪 Validating quality...',
+                                        'github_push_activity': '🐙 Pushing to GitHub...',
+                                        'deploy_activity': '🚀 Deploying application...'
+                                    }
                                     
-                                    # Progressive increase based on time
-                                    if elapsed_minutes < 1:
-                                        progress_pct = 10 + (elapsed_seconds / 60) * 20  # 10-30% in first minute
-                                    elif elapsed_minutes < 3:
-                                        progress_pct = 30 + ((elapsed_minutes - 1) / 2) * 30  # 30-60% in minutes 1-3
-                                    elif elapsed_minutes < 5:
-                                        progress_pct = 60 + ((elapsed_minutes - 3) / 2) * 20  # 60-80% in minutes 3-5
+                                    activity_display = activity_map.get(current_activity, f"🔧 {current_activity}")
+                                    
+                                    if current_task:
+                                        status_msg = f"{activity_display} - {current_task}"
                                     else:
-                                        progress_pct = 80 + min(10, (elapsed_minutes - 5) * 2)  # 80-90% after 5 minutes
+                                        status_msg = activity_display
                                     
-                                    status_msg = f"Workflow running... ({elapsed_minutes:.1f}m elapsed)"
-                                    if thought:
-                                        status_msg = f"💭 {thought}"
+                                    # Add task progress if available
+                                    if tasks_total > 0:
+                                        status_msg += f" ({tasks_completed}/{tasks_total})"
+                                        progress_pct = min(90, (tasks_completed / tasks_total) * 90 + 10)
+                                    else:
+                                        progress_pct = min(90, 10 + attempt * 2)
+                                
+                                elif thought:
+                                    # Show thought bubble
+                                    status_msg = f"💭 {thought}"
+                                    if tasks_total > 0:
+                                        progress_pct = min(90, (tasks_completed / tasks_total) * 90 + 10)
+                                    else:
+                                        progress_pct = min(90, 10 + attempt * 2)
+                                
+                                else:
+                                    # Default status with task info
+                                    if tasks_total > 0:
+                                        progress_pct = min(90, (tasks_completed / tasks_total) * 90 + 10)
+                                        status_msg = f"Processing... ({tasks_completed}/{tasks_total} tasks)"
+                                    else:
+                                        # Time-based estimate
+                                        elapsed_seconds = attempt * 2
+                                        elapsed_minutes = elapsed_seconds / 60
+                                        progress_pct = min(90, 10 + (elapsed_minutes * 20))
+                                        status_msg = f"Workflow running... ({elapsed_minutes:.1f}m elapsed)"
                                 
                                 progress.update(
                                     task, 

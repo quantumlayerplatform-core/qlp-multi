@@ -77,9 +77,10 @@ def cli(ctx, api_url: Optional[str], api_key: Optional[str]):
 @click.option('--timeout', '-t', type=int, default=10, help='Timeout in minutes (default: 10)')
 @click.option('--show-reasoning', '-r', is_flag=True, help='Show AI reasoning process')
 @click.option('--preview', '-p', is_flag=True, help='Show live code preview before generation')
+@click.option('--live', '-L', is_flag=True, help='Show live activity tracking (experimental)')
 @click.pass_context
 def generate(ctx, description: str, language: str, output: Optional[str], 
-             deploy: Optional[str], github: bool, dry_run: bool, timeout: int, show_reasoning: bool, preview: bool):
+             deploy: Optional[str], github: bool, dry_run: bool, timeout: int, show_reasoning: bool, preview: bool, live: bool):
     """Generate a complete project from natural language description"""
     
     # Validate description
@@ -145,91 +146,95 @@ def generate(ctx, description: str, language: str, output: Optional[str],
     
     # Run async generation
     client = ctx.obj['client']
-    asyncio.run(_generate_async(client, description, language, output, deploy, github, timeout, show_reasoning))
+    asyncio.run(_generate_async(client, description, language, output, deploy, github, timeout, show_reasoning, live))
 
 
 async def _generate_async(client: QLPClient, description: str, language: str, 
-                         output: Optional[str], deploy: Optional[str], github: bool, timeout: int = 30, show_reasoning: bool = False):
+                         output: Optional[str], deploy: Optional[str], github: bool, timeout: int = 30, show_reasoning: bool = False, live: bool = False):
     """Async implementation of generation"""
     
     workflow_id = None
     
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            console=console,
-        ) as progress:
-            
-            # Start generation
-            task = progress.add_task("Starting generation...", total=100)
-            
-            result = await client.start_generation(
-                description=description,
-                language=language,
-                deploy_target=deploy,
-                push_to_github=github
-            )
-            
-            workflow_id = result['workflow_id']
-            console.print(f"[dim]Workflow ID: {workflow_id}[/]")
-            progress.update(task, advance=10, description="Workflow started...")
-            
-            # Poll for status with timeout from command line
-            status = await client.poll_workflow_status(
-                workflow_id=workflow_id,
-                progress=progress,
-                task=task,
-                timeout_minutes=timeout
-            )
-            
-            if status['status'] == 'completed':
-                progress.update(task, completed=100, description="Generation complete!")
+        # Start generation first
+        result = await client.start_generation(
+            description=description,
+            language=language,
+            deploy_target=deploy,
+            push_to_github=github
+        )
+        
+        workflow_id = result['workflow_id']
+        console.print(f"[dim]Workflow ID: {workflow_id}[/]")
+        
+        # Use enhanced live display if requested
+        if live:
+            from .live_progress import show_live_progress
+            status = await show_live_progress(client, workflow_id, timeout_minutes=timeout)
+        else:
+            # Use standard progress display
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Workflow started...", total=100)
+                progress.update(task, advance=10)
                 
-                # Get capsule info safely
-                result = status.get('result', {})
-                capsule_id = result.get('capsule_id') if isinstance(result, dict) else None
-                
-                if not capsule_id:
-                    console.print("\n[red]Error:[/] Workflow completed but no capsule ID found")
-                    console.print(f"[dim]Result: {json.dumps(result, indent=2)}[/]")
-                    sys.exit(1)
-                
-                # Download and extract
-                console.print("\n[cyan]Downloading generated files...[/]")
-                output_path = output or f"./generated/{capsule_id}"
-                
-                try:
-                    await client.download_capsule(
-                        capsule_id=capsule_id,
-                        output_path=output_path
-                    )
-                    
-                    # Show results
-                    _show_generation_results(result, output_path)
-                    
-                    # Deploy if requested
-                    if deploy:
-                        console.print(f"\n[cyan]Deploying to {deploy}...[/]")
-                        await _deploy_project(client, capsule_id, deploy)
-                    
-                    # Show tip
-                    console.print(f"\n💡 [italic]{get_random_tip()}[/]")
-                    
-                except Exception as e:
-                    console.print(f"\n[red]Error downloading capsule:[/] {e}")
-                    console.print(f"[dim]Capsule ID: {capsule_id}[/]")
-                    sys.exit(1)
-                
-            else:
-                console.print(f"\n[red]Generation failed:[/] {status.get('error', 'Unknown error')}")
-                console.print(f"[dim]Status: {status.get('status', 'unknown')}[/]")
-                if workflow_id:
-                    console.print(f"[dim]Workflow ID: {workflow_id}[/]")
-                    console.print(f"\n[yellow]Tip:[/] Use 'qlp status {workflow_id}' to check the workflow status")
+                # Poll for status with timeout from command line
+                status = await client.poll_workflow_status(
+                    workflow_id=workflow_id,
+                    progress=progress,
+                    task=task,
+                    timeout_minutes=timeout
+                )
+        
+        # Handle workflow completion (same for both live and standard display)
+        if status['status'] == 'completed':
+            # Get capsule info safely
+            result = status.get('result', {})
+            capsule_id = result.get('capsule_id') if isinstance(result, dict) else None
+            
+            if not capsule_id:
+                console.print("\n[red]Error:[/] Workflow completed but no capsule ID found")
+                console.print(f"[dim]Result: {json.dumps(result, indent=2)}[/]")
                 sys.exit(1)
+            
+            # Download and extract
+            console.print("\n[cyan]Downloading generated files...[/]")
+            output_path = output or f"./generated/{capsule_id}"
+            
+            try:
+                await client.download_capsule(
+                    capsule_id=capsule_id,
+                    output_path=output_path
+                )
+                
+                # Show results
+                _show_generation_results(result, output_path)
+                
+                # Deploy if requested
+                if deploy:
+                    console.print(f"\n[cyan]Deploying to {deploy}...[/]")
+                    await _deploy_project(client, capsule_id, deploy)
+                
+                # Show tip
+                console.print(f"\n💡 [italic]{get_random_tip()}[/]")
+                
+            except Exception as e:
+                console.print(f"\n[red]Error downloading capsule:[/] {e}")
+                console.print(f"[dim]Capsule ID: {capsule_id}[/]")
+                sys.exit(1)
+            
+        else:
+            console.print(f"\n[red]Generation failed:[/] {status.get('error', 'Unknown error')}")
+            console.print(f"[dim]Status: {status.get('status', 'unknown')}[/]")
+            if workflow_id:
+                console.print(f"[dim]Workflow ID: {workflow_id}[/]")
+                console.print(f"\n[yellow]Tip:[/] Use 'qlp status {workflow_id}' to check the workflow status")
+            sys.exit(1)
                 
     except GenerationError as e:
         console.print(f"\n[red]Generation error:[/] {e}")
