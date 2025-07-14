@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 import time
+import os
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -47,22 +48,39 @@ from src.orchestrator.github_actions_integration import GitHubActionsIntegration
 # from src.orchestrator.aitl_endpoints import include_aitl_routes
 from src.nlp.extended_advanced_patterns import ExtendedAdvancedUniversalNLPEngine
 from src.nlp.pattern_selection_engine_fixed import FixedPatternSelectionEngine as PatternSelectionEngine
+
+# Import production API v2 components
+from src.api.v2.production_api import include_v2_router
+from src.api.v2.middleware import setup_middleware
+from src.api.v2.openapi import custom_openapi, setup_documentation
 from src.nlp.pattern_selection_engine import PatternType
 from src.orchestrator.unified_optimization_engine import UnifiedOptimizationEngine, OptimizationContext
 from src.orchestrator.aitl_system import convert_hitl_to_aitl, AITLDecision
 
 logger = structlog.get_logger()
 
-app = FastAPI(title="Quantum Layer Platform Meta-Orchestrator", version="1.0.0")
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="Quantum Layer Platform Meta-Orchestrator", 
+    version="2.0.0",
+    description="Enterprise-grade AI-powered software development platform",
+    docs_url=None,  # Disable default docs - we'll use custom
+    redoc_url=None  # Disable default redoc - we'll use custom
 )
+
+# Setup production middleware (includes CORS, security headers, monitoring, etc.)
+setup_middleware(app)
+
+# Include API v2 routes with production features
+include_v2_router(app)
+
+# Setup custom documentation
+setup_documentation(app)
+
+# Override OpenAPI schema with custom version
+def custom_openapi_wrapper():
+    return custom_openapi(app)
+
+app.openapi = custom_openapi_wrapper
 
 # Include AITL routes - commented out due to import issues
 # include_aitl_routes(app)
@@ -90,6 +108,10 @@ app.include_router(production_router)
 # Include enterprise-grade endpoints
 from src.orchestrator.enterprise_endpoints import router as enterprise_router
 app.include_router(enterprise_router)
+
+# Include HAP (Hate, Abuse, Profanity) endpoints
+from src.api.v2.hap_api import router as hap_router
+app.include_router(hap_router)
 
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
@@ -1246,6 +1268,41 @@ async def execute_request(request: ExecutionRequest):
     - github_enterprise: true (optional, default true for enterprise structure)
     """
     try:
+        # HAP Content Check
+        from src.moderation import check_content, CheckContext, Severity
+        
+        hap_result = await check_content(
+            content=f"{request.description} {request.requirements or ''}",
+            context=CheckContext.USER_REQUEST,
+            user_id=request.user_id,
+            tenant_id=request.tenant_id
+        )
+        
+        if hap_result.severity >= Severity.HIGH:
+            logger.warning(
+                "Request blocked by HAP",
+                user_id=request.user_id,
+                severity=hap_result.severity,
+                categories=hap_result.categories
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Content policy violation",
+                    "detail": hap_result.explanation,
+                    "suggestions": hap_result.suggestions,
+                    "severity": hap_result.severity.value
+                }
+            )
+        
+        # Log if content was flagged but allowed
+        if hap_result.severity >= Severity.MEDIUM:
+            logger.info(
+                "Content flagged but allowed",
+                user_id=request.user_id,
+                severity=hap_result.severity,
+                categories=hap_result.categories
+            )
         # Initialize Temporal client
         temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
         
@@ -2434,14 +2491,21 @@ async def get_capsule_details(capsule_id: str, db: Session = Depends(get_db)):
     try:
         from src.orchestrator.capsule_storage import get_capsule_storage
         
+        logger.info(f"Getting capsule {capsule_id}")
         storage_service = get_capsule_storage(db)
+        
+        logger.info("About to call storage_service.get_capsule")
         capsule = await storage_service.get_capsule(capsule_id)
+        logger.info(f"Got capsule: {capsule is not None}")
         
         if not capsule:
             raise HTTPException(status_code=404, detail="Capsule not found")
         
         # Convert to JSON-serializable format
-        return {
+        logger.info(f"Building response for capsule {capsule_id}")
+        logger.info(f"Capsule created_at type: {type(capsule.created_at)}, value: {capsule.created_at}")
+        
+        response_data = {
             "capsule_id": capsule.id,
             "request_id": capsule.request_id,
             "status": "stored",
@@ -2452,11 +2516,19 @@ async def get_capsule_details(capsule_id: str, db: Session = Depends(get_db)):
             "validation_report": capsule.validation_report.model_dump() if capsule.validation_report else None,
             "deployment_config": capsule.deployment_config,
             "metadata": capsule.metadata,
-            "created_at": capsule.created_at.isoformat() if capsule.created_at else None
+            "created_at": str(capsule.created_at) if capsule.created_at else None
         }
         
+        logger.info("Response data built successfully")
+        
+        # Return directly without jsonable_encoder
+        return response_data
+        
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         logger.error(f"Failed to get capsule details: {str(e)}")
+        logger.error(f"Full traceback:\n{tb}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3010,6 +3082,7 @@ class SimpleDeliveryRequest(BaseModel):
         "deployment_configs": True,
         "runtime_validation": True
     })
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 # Simple delivery endpoint for workflow integration
 @app.post("/capsules/{capsule_id}/deliver")
@@ -3024,15 +3097,98 @@ async def deliver_capsule_simple(
         if request.capsule_id != capsule_id:
             logger.warning(f"Capsule ID mismatch: path={capsule_id}, body={request.capsule_id}")
         
-        # For now, just return success to unblock workflow
-        delivery_id = f"delivery-{capsule_id[:8]}-{uuid4().hex[:8]}"
-        return {
-            "delivery_id": delivery_id,
-            "download_url": f"/capsules/{capsule_id}/download",
-            "expires_at": (datetime.utcnow() + timedelta(days=7)).isoformat(),
-            "package_size": 1024 * 50,  # 50KB placeholder
-            "status": "ready"
+        # Get capsule from storage
+        from src.orchestrator.capsule_storage import get_capsule_storage
+        storage = get_capsule_storage(db)
+        capsule = await storage.get_capsule(capsule_id)
+        
+        if not capsule:
+            raise HTTPException(status_code=404, detail="Capsule not found")
+        
+        # Initialize packager
+        from src.orchestrator.capsule_packager import CapsulePackager
+        packager = CapsulePackager()
+        
+        # Convert capsule to dict format for packaging
+        capsule_data = {
+            "capsule_id": capsule.id,
+            "created_at": capsule.created_at if hasattr(capsule, 'created_at') else datetime.utcnow().isoformat(),
+            "source_code": capsule.source_code,
+            "tests": capsule.tests,
+            "documentation": capsule.documentation,
+            "manifest": capsule.manifest,
+            "metadata": capsule.metadata
         }
+        
+        # Generate package based on format
+        package_format = request.package_format.lower()
+        if package_format == "zip":
+            package_data = packager.package_as_zip(capsule_data)
+        elif package_format == "tar":
+            package_data = packager.package_as_tar_gz(capsule_data)
+        else:
+            package_data = packager.package_as_zip(capsule_data)  # Default to ZIP
+        
+        # Store the package temporarily (in production, use S3/Azure Blob)
+        import tempfile
+        import os
+        temp_dir = tempfile.gettempdir()
+        package_path = os.path.join(temp_dir, f"capsule_{capsule_id}.{package_format}")
+        with open(package_path, 'wb') as f:
+            f.write(package_data)
+        
+        delivery_id = f"delivery-{capsule_id[:8]}-{uuid4().hex[:8]}"
+        
+        # If GitHub push is requested
+        if "github" in request.delivery_methods:
+            # Prepare files for GitHub
+            github_files = packager.prepare_for_github(capsule_data)
+            
+            # Push to GitHub if configured
+            github_url = None
+            try:
+                from src.orchestrator.github_integration import GitHubIntegration
+                
+                # Get GitHub token from request metadata or environment
+                github_token = request.metadata.get("github_token") if hasattr(request, "metadata") else None
+                if not github_token:
+                    github_token = os.getenv("GITHUB_TOKEN")
+                
+                if github_token:
+                    github_client = GitHubIntegration(github_token)
+                    
+                    # Push capsule to GitHub
+                    push_result = await github_client.push_capsule(
+                        capsule,
+                        repo_name=request.metadata.get("github_repo_name") if hasattr(request, "metadata") else None,
+                        private=request.metadata.get("github_private", False) if hasattr(request, "metadata") else False
+                    )
+                    
+                    github_url = push_result.get("repository_url")
+                    logger.info(f"Successfully pushed capsule to GitHub: {github_url}")
+                else:
+                    logger.warning("GitHub push requested but no token available")
+            except Exception as e:
+                logger.error(f"Failed to push to GitHub: {str(e)}")
+            
+            logger.info(f"Prepared {len(github_files)} files for GitHub push")
+        
+        response_data = {
+            "delivery_id": delivery_id,
+            "download_url": f"/api/capsules/{capsule_id}/download?format={package_format}",
+            "expires_at": (datetime.utcnow() + timedelta(days=7)).isoformat(),
+            "package_size": len(package_data),
+            "status": "ready",
+            "package_format": package_format
+        }
+        
+        # Add GitHub URL if successfully pushed
+        if "github" in request.delivery_methods and 'github_url' in locals():
+            response_data["github_url"] = github_url
+        
+        return response_data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Delivery preparation failed: {str(e)}")
         logger.error(f"Request data: {request.dict() if request else 'No request data'}")

@@ -18,6 +18,7 @@ from src.common.auth import get_current_user
 from src.orchestrator.production_capsule_system import get_production_capsule_system
 from src.orchestrator.production_github_integration import get_production_github_integration
 from src.orchestrator.capsule_storage import CapsuleStorageService
+from src.moderation import check_content, CheckContext, Severity
 
 logger = structlog.get_logger()
 

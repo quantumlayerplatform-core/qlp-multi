@@ -1,0 +1,47 @@
+# HAP Integration Override
+# Use this with docker-compose to add HAP without rebuilding
+# docker-compose -f docker-compose.platform.yml -f docker-compose.hap.yml up -d
+
+version: '3.8'
+
+services:
+  orchestrator:
+    volumes:
+      # Mount HAP modules
+      - ./src/moderation:/app/src/moderation:ro
+      - ./src/api/v2/hap_api.py:/app/src/api/v2/hap_api.py:ro
+      - ./src/agents/hap_filtered_agent.py:/app/src/agents/hap_filtered_agent.py:ro
+    environment:
+      - HAP_ENABLED=true
+      - HAP_STRICT_MODE=true
+      - HAP_CACHE_TTL=86400
+      # Add Redis URL for HAP caching
+      - REDIS_URL=redis://redis:6379/0
+
+  agent-factory:
+    volumes:
+      # Mount HAP modules for agents
+      - ./src/moderation:/app/src/moderation:ro
+      - ./src/agents/hap_filtered_agent.py:/app/src/agents/hap_filtered_agent.py:ro
+    environment:
+      - HAP_ENABLED=true
+      - HAP_STRICT_MODE=true
+      - REDIS_URL=redis://redis:6379/0
+
+  validation-mesh:
+    volumes:
+      # Mount HAP modules for validation
+      - ./src/moderation:/app/src/moderation:ro
+    environment:
+      - HAP_ENABLED=true
+      - HAP_STRICT_MODE=true
+      - REDIS_URL=redis://redis:6379/0
+
+  temporal-worker:
+    volumes:
+      # Mount HAP modules for worker
+      - ./src/moderation:/app/src/moderation:ro
+    environment:
+      - HAP_ENABLED=true
+      - HAP_STRICT_MODE=true
+      - REDIS_URL=redis://redis:6379/0

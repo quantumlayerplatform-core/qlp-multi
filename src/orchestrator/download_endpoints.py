@@ -9,9 +9,11 @@ from fastapi import APIRouter, HTTPException, Query, Response, Depends
 from fastapi.responses import StreamingResponse, FileResponse
 import zipfile
 import tarfile
+from sqlalchemy.orm import Session
 
 from src.common.models import QLCapsule
 from src.common.auth import get_current_user
+from src.common.database import get_db
 from src.orchestrator.capsule_storage import CapsuleStorageService as PostgresCapsuleStorage
 from src.orchestrator.capsule_export import CapsuleExporter, CapsuleStreamer
 
@@ -23,30 +25,38 @@ router = APIRouter(prefix="/api/capsules", tags=["capsule-download"])
 async def list_capsules(
     limit: int = Query(10, description="Maximum number of capsules to return"),
     offset: int = Query(0, description="Number of capsules to skip"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """List available capsules with pagination"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     
     try:
-        capsules = await storage.list_capsules(limit=limit, offset=offset)
+        # For now, list_capsules returns dict data from the database
+        # This needs to be refactored to use the correct method
+        # Using a simple query for now
+        from src.common.database import CapsuleModel
+        
+        query = db.query(CapsuleModel)
+        query = query.offset(offset).limit(limit)
+        capsule_models = query.all()
         
         # Transform for API response
         results = []
-        for capsule in capsules:
-            manifest = capsule.get('manifest', {})
-            metadata = capsule.get('metadata', {})
+        for capsule_model in capsule_models:
+            manifest = capsule_model.manifest or {}
+            metadata = capsule_model.meta_data or {}
             
             results.append({
-                "id": capsule['id'],
+                "id": str(capsule_model.id),
                 "name": manifest.get('name', 'Unnamed'),
                 "description": manifest.get('description', ''),
                 "language": manifest.get('language', 'Unknown'),
                 "framework": manifest.get('framework', 'Unknown'),
-                "created_at": capsule.get('created_at'),
+                "created_at": capsule_model.created_at.isoformat() if capsule_model.created_at else None,
                 "confidence_score": metadata.get('confidence_score', 0),
                 "production_ready": metadata.get('production_ready', False),
-                "file_count": len(capsule.get('source_code', {})) + len(capsule.get('tests', {}))
+                "file_count": capsule_model.file_count or 0
             })
         
         return {
@@ -63,37 +73,38 @@ async def list_capsules(
 @router.get("/{capsule_id}")
 async def get_capsule_details(
     capsule_id: str,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get detailed information about a specific capsule"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     
     try:
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
         
         # Transform for API response
-        manifest = capsule_data.get('manifest', {})
-        metadata = capsule_data.get('metadata', {})
-        validation = capsule_data.get('validation_report', {})
+        manifest = capsule.manifest
+        metadata = capsule.metadata
+        validation = capsule.validation_report
         
         return {
-            "id": capsule_data['id'],
-            "request_id": capsule_data.get('request_id'),
-            "created_at": capsule_data.get('created_at'),
+            "id": capsule.id,
+            "request_id": capsule.request_id,
+            "created_at": capsule.created_at,
             "manifest": manifest,
             "metadata": metadata,
-            "validation_report": validation,
+            "validation_report": validation.model_dump() if validation else None,
             "files": {
-                "source_code": list(capsule_data.get('source_code', {}).keys()),
-                "tests": list(capsule_data.get('tests', {}).keys()),
-                "has_documentation": bool(capsule_data.get('documentation')),
-                "has_deployment_config": bool(capsule_data.get('deployment_config'))
+                "source_code": list(capsule.source_code.keys()),
+                "tests": list(capsule.tests.keys()),
+                "has_documentation": bool(capsule.documentation),
+                "has_deployment_config": bool(capsule.deployment_config)
             },
             "stats": {
-                "total_files": len(capsule_data.get('source_code', {})) + len(capsule_data.get('tests', {})),
+                "total_files": len(capsule.source_code) + len(capsule.tests),
                 "total_lines": metadata.get('total_lines', 0),
                 "languages": metadata.get('languages', []),
                 "frameworks": metadata.get('frameworks', []),
@@ -111,20 +122,19 @@ async def get_capsule_details(
 async def download_capsule(
     capsule_id: str,
     format: str = Query("zip", description="Download format: zip, tar, tar.gz"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Download a capsule in the specified format"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     exporter = CapsuleExporter()
     
     try:
         # Fetch capsule
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
-        
-        capsule = QLCapsule(**capsule_data)
         manifest = capsule.manifest
         name = manifest.get('name', 'unnamed').lower().replace(' ', '-')
         
@@ -170,20 +180,19 @@ async def stream_capsule(
     capsule_id: str,
     format: str = Query("tar.gz", description="Stream format: tar.gz"),
     chunk_size: int = Query(1024*1024, description="Chunk size in bytes"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Stream a large capsule in chunks"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     streamer = CapsuleStreamer()
     
     try:
         # Fetch capsule
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
-        
-        capsule = QLCapsule(**capsule_data)
         manifest = capsule.manifest
         name = manifest.get('name', 'unnamed').lower().replace(' ', '-')
         
@@ -210,19 +219,18 @@ async def stream_capsule(
 async def get_capsule_file(
     capsule_id: str,
     file_path: str,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get a specific file from a capsule"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     
     try:
         # Fetch capsule
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
-        
-        capsule = QLCapsule(**capsule_data)
         
         # Look for file in source code and tests
         content = None
@@ -278,20 +286,19 @@ async def get_capsule_file(
 @router.get("/{capsule_id}/export/helm")
 async def export_as_helm(
     capsule_id: str,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Export capsule as a Helm chart"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     exporter = CapsuleExporter()
     
     try:
         # Fetch capsule
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
-        
-        capsule = QLCapsule(**capsule_data)
         
         # Export as Helm chart
         helm_data = await exporter.export_as_helm_chart(capsule)
@@ -307,20 +314,19 @@ async def export_as_helm(
 @router.get("/{capsule_id}/export/terraform")
 async def export_as_terraform(
     capsule_id: str,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Export capsule as Terraform configuration"""
-    storage = PostgresCapsuleStorage()
+    storage = PostgresCapsuleStorage(db)
     exporter = CapsuleExporter()
     
     try:
         # Fetch capsule
-        capsule_data = await storage.get_capsule(capsule_id)
+        capsule = await storage.get_capsule(capsule_id)
         
-        if not capsule_data:
+        if not capsule:
             raise HTTPException(status_code=404, detail=f"Capsule {capsule_id} not found")
-        
-        capsule = QLCapsule(**capsule_data)
         
         # Export as Terraform
         tf_data = await exporter.export_as_terraform(capsule)

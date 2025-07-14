@@ -19,8 +19,11 @@ def json_serial(obj):
 
 
 # Base model configuration for all models
+# Fixed to handle both datetime objects and strings
 base_model_config = ConfigDict(
-    json_encoders={datetime: lambda v: v.isoformat() if v else None}
+    json_encoders={
+        datetime: lambda v: v.isoformat() if isinstance(v, datetime) else v
+    }
 )
 
 

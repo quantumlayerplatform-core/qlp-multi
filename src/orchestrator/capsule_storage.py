@@ -101,7 +101,18 @@ class CapsuleStorageService:
         # Convert database model to QLCapsule
         validation_report = None
         if capsule_model.validation_report:
-            validation_report = ValidationReport(**capsule_model.validation_report)
+            try:
+                # Create a copy of the validation report data
+                vr_data = dict(capsule_model.validation_report)
+                logger.info(f"ValidationReport data: {vr_data}")
+                logger.info(f"created_at in vr_data: {'created_at' in vr_data}")
+                if 'created_at' in vr_data:
+                    logger.info(f"created_at type: {type(vr_data['created_at'])}, value: {vr_data['created_at']}")
+                validation_report = ValidationReport(**vr_data)
+            except Exception as e:
+                logger.error(f"Failed to create ValidationReport: {str(e)}")
+                logger.error(f"ValidationReport data: {capsule_model.validation_report}")
+                raise
         
         # Parse JSON fields if they're strings
         source_code = capsule_model.source_code
@@ -139,6 +150,14 @@ class CapsuleStorageService:
             except:
                 metadata = {}
         
+        # Handle created_at - convert datetime to string if needed
+        created_at_str = None
+        if capsule_model.created_at:
+            if isinstance(capsule_model.created_at, str):
+                created_at_str = capsule_model.created_at
+            else:
+                created_at_str = capsule_model.created_at.isoformat()
+        
         capsule = QLCapsule(
             id=str(capsule_model.id),
             request_id=capsule_model.request_id,
@@ -149,7 +168,7 @@ class CapsuleStorageService:
             validation_report=validation_report,
             deployment_config=deployment_config or {},
             metadata=metadata or {},
-            created_at=capsule_model.created_at.isoformat() if capsule_model.created_at else datetime.utcnow().isoformat()
+            created_at=created_at_str or datetime.utcnow().isoformat()
         )
         
         logger.info("Retrieved capsule", capsule_id=capsule_id)

@@ -117,8 +117,23 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
     import httpx
     from ..common.config import settings
     from .shared_context import ContextBuilder
+    from ..moderation import check_content, CheckContext, Severity
     
     activity.logger.info(f"Decomposing request: {request['request_id']}")
+    
+    # HAP Content Check
+    hap_result = await check_content(
+        content=f"{request['description']} {request.get('requirements', '')}",
+        context=CheckContext.USER_REQUEST,
+        user_id=request.get("user_id"),
+        tenant_id=request.get("tenant_id")
+    )
+    
+    if hap_result.severity >= Severity.HIGH:
+        activity.logger.warning(
+            f"Request blocked by HAP - Severity: {hap_result.severity}, Categories: {hap_result.categories}"
+        )
+        raise ValueError(f"Content policy violation: {hap_result.explanation}")
     
     # Send initial heartbeat
     activity.heartbeat("Starting decomposition...")
@@ -433,6 +448,44 @@ async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str, sh
             }
         
         result = response.json()
+        
+        # HAP Check on Agent Output
+        from ..moderation import check_content, CheckContext, Severity
+        
+        if result.get("status") == "completed" and result.get("output"):
+            output_text = ""
+            if isinstance(result["output"], dict):
+                output_text = result["output"].get("code", result["output"].get("content", ""))
+            else:
+                output_text = str(result["output"])
+            
+            if output_text:
+                hap_result = await check_content(
+                    content=output_text,
+                    context=CheckContext.AGENT_OUTPUT,
+                    user_id=shared_context_dict.get("user_id"),
+                    tenant_id=shared_context_dict.get("tenant_id")
+                )
+                
+                # Add HAP metadata
+                result["hap_check"] = {
+                    "severity": hap_result.severity.value,
+                    "categories": [cat.value for cat in hap_result.categories],
+                    "filtered": hap_result.severity >= Severity.MEDIUM
+                }
+                
+                # If content is inappropriate, mark as failed
+                if hap_result.severity >= Severity.HIGH:
+                    activity.logger.warning(
+                        f"Agent output blocked by HAP - Task: {task['task_id']}, Severity: {hap_result.severity}"
+                    )
+                    result["status"] = "failed"
+                    result["output"] = {
+                        "error": "Agent generated inappropriate content",
+                        "hap_severity": hap_result.severity.value,
+                        "hap_explanation": hap_result.explanation
+                    }
+                    result["output_type"] = "error"
         
         # Step 4: Post-hoc detection & rejection if wrong language
         if result.get("status") == "completed" and result.get("output_type") == "code":
