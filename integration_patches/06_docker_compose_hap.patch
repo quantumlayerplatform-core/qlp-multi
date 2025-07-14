@@ -1,0 +1,31 @@
+--- a/docker-compose.platform.yml
++++ b/docker-compose.platform.yml
+@@ -51,6 +51,9 @@ services:
+       - GITHUB_TOKEN=${GITHUB_TOKEN}
+       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+       - CLERK_JWKS_URL=${CLERK_JWKS_URL}
++      - HAP_ENABLED=true
++      - HAP_STRICT_MODE=true
++      - HAP_CACHE_TTL=86400
+     depends_on:
+       postgres:
+         condition: service_healthy
+@@ -90,6 +93,9 @@ services:
+       - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
+       - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
+       - GROQ_API_KEY=${GROQ_API_KEY}
++      - HAP_ENABLED=true
++      - HAP_STRICT_MODE=true
++      - HAP_CACHE_TTL=86400
+     depends_on:
+       postgres:
+         condition: service_healthy
+@@ -119,6 +125,8 @@ services:
+       - POSTGRES_DB=qlp_db
+       - REDIS_URL=redis://redis:6379/0
+       - DOCKER_HOST=unix:///var/run/docker.sock
++      - HAP_ENABLED=true
++      - HAP_STRICT_MODE=true
+     depends_on:
+       postgres:
+         condition: service_healthy

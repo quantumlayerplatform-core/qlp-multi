@@ -1,0 +1,41 @@
+@@ -100,6 +101,39 @@
+ ) -> CapsuleGenerationResponse:
+     """Generate production-ready capsule with enterprise features"""
+     start_time = datetime.utcnow()
++    
++    # HAP Content Check
++    try:
++        hap_result = await check_content(
++            content=f"{request.description} {request.requirements or ''}",
++            context=CheckContext.USER_REQUEST,
++            user_id=request.user_id,
++            tenant_id=request.tenant_id
++        )
++        
++        if hap_result.severity >= Severity.HIGH:
++            logger.warning(
++                "Request blocked by content policy",
++                user_id=request.user_id,
++                severity=hap_result.severity,
++                categories=hap_result.categories
++            )
++            return CapsuleGenerationResponse(
++                success=False,
++                capsule_id="",
++                status="blocked",
++                message=f"Content policy violation: {hap_result.explanation}",
++                metrics={"hap_severity": hap_result.severity},
++                errors=[{
++                    "type": "content_policy",
++                    "message": hap_result.explanation,
++                    "suggestions": hap_result.suggestions
++                }]
++            )
++    except Exception as e:
++        # Log but don't block on HAP errors
++        logger.error(f"HAP check failed: {e}")
++    
+     metrics = {
+         "start_time": start_time.isoformat(),
+         "priority": request.priority
+\ No newline at end of line

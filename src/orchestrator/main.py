@@ -113,6 +113,10 @@ app.include_router(enterprise_router)
 from src.api.v2.hap_api import router as hap_router
 app.include_router(hap_router)
 
+# Include Marketing Campaign endpoints
+from src.api.v2.marketing_api import router as marketing_router
+app.include_router(marketing_router)
+
 # Initialize clients
 # Use Azure OpenAI if configured, otherwise fall back to OpenAI
 if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:

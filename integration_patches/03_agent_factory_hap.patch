@@ -1,0 +1,36 @@
+--- a/src/agents/agent_factory.py
++++ b/src/agents/agent_factory.py
+@@ -8,6 +8,8 @@ from src.agents.specialized_agents import (
+ )
+ from src.agents.ensemble import EnsembleAgent
+ from src.agents.execution_validator import ExecutionValidator
++from src.agents.hap_filtered_agent import create_hap_filtered_agent
++from src.common.config import settings
+ import structlog
+ 
+ logger = structlog.get_logger()
+@@ -19,6 +21,8 @@ class AgentFactory:
+     def __init__(self):
+         self.agents = {}
+         self.performance_tracker = PerformanceTracker()
++        self.hap_enabled = settings.get("HAP_ENABLED", True)
++        self.hap_strict_mode = settings.get("HAP_STRICT_MODE", True)
+         self._initialize_agents()
+     
+     def _initialize_agents(self):
+@@ -92,7 +96,13 @@ class AgentFactory:
+             agent_class = self.agents[agent_type][tier]
+             config = self._get_agent_config(agent_type, tier)
+             config.update(kwargs.get("config", {}))
+-            return agent_class(agent_id=agent_id, config=config)
++            
++            # Create base agent
++            base_agent = agent_class(agent_id=agent_id, config=config)
++            
++            # Wrap with HAP filtering if enabled
++            if self.hap_enabled:
++                return create_hap_filtered_agent(base_agent, self.hap_strict_mode)
++            
++            return base_agent
+         except KeyError:
+             raise ValueError(f"Unknown agent type or tier: {agent_type}/{tier}")

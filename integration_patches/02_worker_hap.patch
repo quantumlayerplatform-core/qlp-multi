@@ -1,0 +1,51 @@
+--- a/src/orchestrator/worker_production.py
++++ b/src/orchestrator/worker_production.py
+@@ -13,6 +13,7 @@ from src.common.models import ExecutionRequest, Task, TaskResult, QLCapsule
+ from src.agents.agent_factory import get_agent_factory
+ from src.validation.enhanced_validation_service import get_validation_service
+ from src.orchestrator.capsule_storage import get_capsule_storage
++from src.moderation import check_content, CheckContext, Severity
+ import structlog
+ 
+ logger = structlog.get_logger()
+@@ -187,6 +188,17 @@ async def decompose_request(request: ExecutionRequest) -> TaskDecomposition:
+     """
+     logger.info(f"Decomposing request: {request.request_id}")
+     
++    # HAP check on request
++    hap_result = await check_content(
++        content=request.description,
++        context=CheckContext.USER_REQUEST,
++        user_id=request.user_id,
++        tenant_id=request.tenant_id
++    )
++    
++    if hap_result.severity >= Severity.HIGH:
++        raise ValueError(f"Request blocked by content policy: {hap_result.explanation}")
++    
+     # Get shared context
+     shared_context = workflow.info().search_attributes.get("shared_context", {})
+     
+@@ -265,6 +277,23 @@ async def execute_task_activity(params: Dict[str, Any]) -> TaskResult:
+     # Execute task
+     result = await agent.execute(task)
+     
++    # HAP check on output
++    if result.status == "completed":
++        output_check = await check_content(
++            content=result.output,
++            context=CheckContext.AGENT_OUTPUT,
++            user_id=params.get("user_id"),
++            tenant_id=params.get("tenant_id")
++        )
++        
++        # Add HAP metadata
++        result.metadata["hap_check"] = {
++            "severity": output_check.severity,
++            "categories": [cat.value for cat in output_check.categories],
++            "filtered": output_check.severity >= Severity.MEDIUM
++        }
++    
+     # Update shared context with result
+     await update_shared_context(shared_context, {
+         f"task_{task.task_id}_result": {

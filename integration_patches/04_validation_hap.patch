@@ -1,0 +1,67 @@
+--- a/src/validation/enhanced_validation_service.py
++++ b/src/validation/enhanced_validation_service.py
+@@ -6,6 +6,7 @@ import subprocess
+ import tempfile
+ from src.common.models import ValidationReport, ValidationStage
+ from src.sandbox.enhanced_sandbox import EnhancedExecutionSandbox
++from src.moderation import check_content, CheckContext, Severity
+ import structlog
+ 
+ logger = structlog.get_logger()
+@@ -83,6 +84,11 @@ class EnhancedValidationService:
+             stages.append(runtime_stage)
+         else:
+             logger.error(f"Runtime validation not available for {language}")
++            
++        # Stage 6: Content Safety (HAP)
++        hap_stage = await self._validate_content_safety(code, language, context)
++        stages.append(hap_stage)
++        logger.info(f"Content safety validation: {hap_stage.passed}")
+         
+         # Calculate overall score
+         overall_score = sum(s.score * s.weight for s in stages) / sum(s.weight for s in stages)
+@@ -249,6 +255,43 @@ class EnhancedValidationService:
+             suggestions=["Ensure code executes without errors", "Check for runtime exceptions"]
+         )
+     
++    async def _validate_content_safety(self, code: str, language: str, context: Dict[str, Any]) -> ValidationStage:
++        """Validate content safety using HAP"""
++        try:
++            result = await check_content(
++                content=code,
++                context=CheckContext.AGENT_OUTPUT,
++                user_id=context.get("user_id"),
++                tenant_id=context.get("tenant_id")
++            )
++            
++            # Calculate score based on severity
++            severity_scores = {
++                Severity.CLEAN: 1.0,
++                Severity.LOW: 0.9,
++                Severity.MEDIUM: 0.7,
++                Severity.HIGH: 0.3,
++                Severity.CRITICAL: 0.0
++            }
++            
++            score = severity_scores.get(result.severity, 0.5)
++            
++            return ValidationStage(
++                name="content_safety",
++                passed=result.severity < Severity.HIGH,
++                score=score,
++                weight=0.8,  # Important but not critical
++                details={
++                    "severity": result.severity,
++                    "categories": [cat.value for cat in result.categories],
++                    "explanation": result.explanation
++                },
++                suggestions=[result.suggestions] if result.suggestions else []
++            )
++            
++        except Exception as e:
++            logger.error(f"HAP validation failed: {e}")
++            # Fail open - don't block on HAP errors
++            return ValidationStage(
++                name="content_safety",
++                passed=True,
++                score=1.0,

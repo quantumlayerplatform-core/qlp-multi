@@ -11,6 +11,7 @@ from uuid import uuid4
 import structlog
 
 from sqlalchemy.orm import Session
+from fastapi import Depends
 from src.common.database import CapsuleRepository, CapsuleModel, CapsuleVersionModel, get_db
 from src.common.models import QLCapsule, ExecutionRequest, ValidationReport
 from src.common.error_handling import QLPError, ErrorSeverity, handle_errors
@@ -463,6 +464,6 @@ class CapsuleStorageService:
 
 
 # Factory function for dependency injection
-def get_capsule_storage(db: Session = get_db()) -> CapsuleStorageService:
+def get_capsule_storage(db: Session = Depends(get_db)) -> CapsuleStorageService:
     """Get capsule storage service instance"""
     return CapsuleStorageService(db)
