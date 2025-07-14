@@ -1964,6 +1964,26 @@ async def start_worker():
     # )
     logger.info("Enhanced temporal integration temporarily disabled due to Pydantic validation issues")
     
+    # Import marketing workflows and activities
+    try:
+        from src.orchestrator.marketing_workflow import (
+            MarketingWorkflow,
+            ContentGenerationWorkflow,
+            CampaignOptimizationWorkflow,
+            generate_campaign_strategy,
+            create_content_calendar,
+            generate_content_piece,
+            optimize_content_batch,
+            collect_campaign_analytics,
+            apply_campaign_optimizations,
+            create_marketing_capsule
+        )
+        marketing_available = True
+        logger.info("Marketing workflows and activities imported successfully")
+    except ImportError as e:
+        marketing_available = False
+        logger.warning(f"Marketing workflows not available: {e}")
+    
     # Build workflows and activities lists
     workflows = [QLPWorkflow]
     activities = [
@@ -1977,6 +1997,24 @@ async def start_worker():
         llm_clean_code_activity,
         prepare_delivery_activity
     ]
+    
+    # Add marketing workflows and activities if available
+    if marketing_available:
+        workflows.extend([
+            MarketingWorkflow,
+            ContentGenerationWorkflow,
+            CampaignOptimizationWorkflow
+        ])
+        activities.extend([
+            generate_campaign_strategy,
+            create_content_calendar,
+            generate_content_piece,
+            optimize_content_batch,
+            collect_campaign_analytics,
+            apply_campaign_optimizations,
+            create_marketing_capsule
+        ])
+        logger.info("Marketing workflows and activities added to worker")
     
     # Add enhanced components if available
     if enhanced_available:

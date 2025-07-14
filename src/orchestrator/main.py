@@ -4179,6 +4179,108 @@ async def reset_optimization_learning():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Marketing Workflow Support Endpoints
+@app.post("/marketing/strategy")
+async def generate_marketing_strategy(request: Dict[str, Any]):
+    """Generate marketing campaign strategy (called by workflow activity)"""
+    try:
+        from src.agents.marketing.orchestrator import MarketingOrchestrator
+        orchestrator = MarketingOrchestrator()
+        
+        # Generate strategy using narrative agent
+        strategy = await orchestrator.narrative_agent.generate_strategy(
+            objective=request["objective"],
+            product_description=request["product_description"],
+            key_features=request["key_features"],
+            target_audience=request["target_audience"],
+            unique_value_prop=request["unique_value_prop"],
+            duration_days=request["duration_days"],
+            channels=request["channels"]
+        )
+        
+        return {
+            "strategy": strategy,
+            "content_themes": ["innovation", "reliability", "efficiency"],
+            "messaging_pillars": ["AI-powered", "Enterprise-ready", "Developer-friendly"],
+            "channel_strategies": {
+                channel: f"Optimize for {channel} audience"
+                for channel in request["channels"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Strategy generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/marketing/calendar")
+async def create_marketing_calendar(request: Dict[str, Any]):
+    """Create content calendar (called by workflow activity)"""
+    try:
+        from src.agents.marketing.orchestrator import MarketingOrchestrator
+        from datetime import datetime, timedelta
+        
+        orchestrator = MarketingOrchestrator()
+        duration_days = request["duration_days"]
+        channels = request["channels"]
+        
+        # Generate calendar using scheduler agent
+        calendar = {}
+        start_date = datetime.now()
+        
+        for day in range(duration_days):
+            date = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
+            daily_content = []
+            
+            # Schedule 1-3 pieces per day based on channels
+            for channel in channels[:3]:  # Max 3 per day
+                daily_content.append({
+                    "type": f"{channel}_post",
+                    "channel": channel,
+                    "time": "09:00" if channel == "linkedin" else "14:00"
+                })
+            
+            if daily_content:
+                calendar[date] = daily_content
+        
+        return {"calendar": calendar}
+        
+    except Exception as e:
+        logger.error(f"Calendar creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/capsules/marketing")
+async def create_marketing_capsule(request: Dict[str, Any]):
+    """Create marketing capsule (called by workflow activity)"""
+    try:
+        from src.common.marketing_capsule import MarketingCapsule
+        from src.orchestrator.capsule_storage import CapsuleStorageService
+        
+        # Create marketing capsule
+        capsule = MarketingCapsule(
+            request_id=request["request_id"],
+            user_id=request["user_id"],
+            tenant_id=request["tenant_id"],
+            campaign_data=request["campaign_data"],
+            metadata=request["metadata"]
+        )
+        
+        # Store capsule
+        storage = CapsuleStorageService()
+        capsule_id = await storage.store_capsule(capsule)
+        
+        return {
+            "capsule_id": capsule_id,
+            "status": "created",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Marketing capsule creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Worker setup
 async def run_worker():
     """Run Temporal worker"""
