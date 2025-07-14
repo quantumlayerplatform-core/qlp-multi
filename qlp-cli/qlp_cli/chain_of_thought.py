@@ -30,7 +30,6 @@ class ChainOfThought:
     
     def __init__(self):
         self.steps: List[ThoughtStep] = []
-        self.current_category = None
         self.start_time = time.time()
         
     def add_step(self, category: str, thought: str, details: List[str] = None, confidence: float = 1.0):
@@ -49,10 +48,12 @@ class ChainOfThought:
         tree = Tree("💭 [bold cyan]Chain of Thought[/]")
         
         current_branch = None
+        current_category = None
+        
         for step in self.steps:
-            if step.category != self.current_category:
+            if step.category != current_category:
                 current_branch = tree.add(f"[bold yellow]{step.category}[/]")
-                self.current_category = step.category
+                current_category = step.category
             
             # Add main thought
             thought_text = Text(step.thought)
@@ -63,11 +64,12 @@ class ChainOfThought:
             else:
                 thought_text.stylize("green")
             
-            step_branch = current_branch.add(thought_text)
-            
-            # Add details
-            for detail in step.details:
-                step_branch.add(f"[dim]└─ {detail}[/]")
+            if current_branch is not None:
+                step_branch = current_branch.add(thought_text)
+                
+                # Add details
+                for detail in step.details:
+                    step_branch.add(f"[dim]└─ {detail}[/]")
         
         return tree
     
@@ -155,6 +157,11 @@ def generate_reasoning_chain(description: str, language: str) -> ChainOfThought:
     chain = ChainOfThought()
     project_type = detect_project_type(description)
     
+    # Assess complexity
+    words = description.lower().split()
+    is_simple = any(word in words for word in ["simple", "basic", "hello", "sum", "add"])
+    complexity = "simple" if is_simple else "medium"
+    
     # Initial understanding
     chain.add_step(
         "🔍 Analyzing Request",
@@ -162,13 +169,41 @@ def generate_reasoning_chain(description: str, language: str) -> ChainOfThought:
         [
             f"Project type detected: {project_type}",
             f"Language preference: {language}",
-            f"Complexity assessment: medium"
+            f"Complexity assessment: {complexity}"
         ],
         confidence=0.95
     )
     
-    # Tech stack reasoning
-    if project_type == "api":
+    # For simple programs, use simpler reasoning
+    if is_simple and project_type == "general":
+        chain.add_step(
+            "📋 Planning Implementation",
+            "Designing simple, clean solution",
+            [
+                "Single file implementation",
+                "Clear function structure",
+                "User-friendly input/output",
+                "Basic error handling"
+            ],
+            confidence=0.98
+        )
+        
+        chain.add_step(
+            "✨ Code Structure",
+            "Keeping it simple and readable",
+            [
+                "Main function for logic",
+                "Input validation",
+                "Clear output formatting",
+                "Optional: command-line interface"
+            ],
+            confidence=0.95
+        )
+        
+        return chain
+    
+    # Tech stack reasoning for more complex projects
+    elif project_type == "api":
         if language == "python":
             chain.add_step(
                 "🛠️ Selecting Tech Stack",
