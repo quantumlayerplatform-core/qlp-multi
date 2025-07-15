@@ -6,6 +6,8 @@ Enhanced GitHub Integration - Extends existing v2 with LLM-powered structure gen
 import os
 import json
 import re
+import base64
+import aiohttp
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from pathlib import Path
@@ -103,7 +105,8 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
                 # Create a modified capsule with the new structure
                 modified_capsule = self._create_modified_capsule(capsule, organized_files, analysis)
                 
-                # Use the parent class method with the modified capsule
+                # Call parent's push_capsule_atomic which handles the actual GitHub push
+                # The parent method will use our CI/CD file if it's in the capsule
                 return await super().push_capsule_atomic(modified_capsule, repo_name, private)
             except Exception as e:
                 logger.error(f"Failed to use intelligent structure, falling back to standard push: {e}")
@@ -259,11 +262,19 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
                 organized_files[path] = content
             
             # Add essential files if not already included
-            organized_files = self._ensure_essential_files(
+            organized_files = await self._ensure_essential_files(
                 organized_files, 
                 capsule, 
                 analysis
             )
+            
+            # IMPORTANT: Add CI/CD workflow to organized_files so parent class doesn't override
+            if ".github/workflows/ci.yml" not in organized_files:
+                language = capsule.manifest.get('language', '').lower()
+                project_type = analysis.get('project_type', 'library')
+                organized_files[".github/workflows/ci.yml"] = await self._generate_enhanced_ci(
+                    capsule, language, project_type
+                )
             
             return organized_files
             
@@ -340,7 +351,21 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
         
         return modified
     
-    def _ensure_essential_files(
+    async def _push_with_intelligent_files(
+        self,
+        capsule: QLCapsule,
+        repo_name: Optional[str] = None,
+        private: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Custom push method that respects files already in the capsule
+        """
+        # Call parent method which will handle the push
+        result = await super().push_capsule_atomic(capsule, repo_name, private)
+        
+        return result
+    
+    async def _ensure_essential_files(
         self,
         files: Dict[str, str],
         capsule: QLCapsule,
@@ -360,12 +385,12 @@ class EnhancedGitHubIntegration(GitHubIntegrationV2):
         if ".gitignore" not in files:
             files[".gitignore"] = self._generate_enhanced_gitignore(language)
         
-        # Ensure CI/CD workflow exists
-        if ".github/workflows/ci.yml" not in files:
-            files[".github/workflows/ci.yml"] = self._generate_enhanced_ci(
-                language, 
-                project_type
-            )
+        # Always use enhanced CI/CD workflow (override basic one if exists)
+        files[".github/workflows/ci.yml"] = await self._generate_enhanced_ci(
+            capsule,
+            language, 
+            project_type
+        )
         
         # Language-specific essentials
         if language == "python":
@@ -472,8 +497,35 @@ qlp-output/
         
         return base
     
-    def _generate_enhanced_ci(self, language: str, project_type: str) -> str:
-        """Generate enhanced CI/CD workflow"""
+    async def _generate_enhanced_ci(self, capsule: QLCapsule, language: str, project_type: str) -> str:
+        """Generate enhanced CI/CD workflow using intelligent LLM-based generation"""
+        try:
+            # Use intelligent CI/CD generator
+            from .intelligent_cicd_generator import generate_intelligent_cicd, CICDPlatform
+            
+            logger.info("Using intelligent CI/CD generator for workflow creation")
+            
+            # Generate CI/CD pipeline using LLM
+            cicd_content = await generate_intelligent_cicd(
+                capsule=capsule,
+                platform=CICDPlatform.GITHUB_ACTIONS,
+                additional_requirements={
+                    'project_type': project_type,
+                    'enable_releases': True,
+                    'enable_security_scanning': True,
+                    'enable_dependency_updates': True
+                }
+            )
+            
+            return cicd_content
+            
+        except Exception as e:
+            logger.error(f"Failed to generate intelligent CI/CD, falling back to template: {e}")
+            # Fallback to language-specific template
+            return self._generate_fallback_ci(language, project_type)
+    
+    def _generate_fallback_ci(self, language: str, project_type: str) -> str:
+        """Fallback CI/CD generation with templates"""
         if language == "python":
             return f"""name: CI/CD
 
@@ -502,7 +554,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
-        key: ${{{{ runner.os }}}}-pip-${{{{ hashFiles('**/requirements*.txt') }}}}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
     
     - name: Install dependencies
       run: |
@@ -521,7 +573,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{{{ matrix.os }}}}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -530,10 +582,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Set up Python ${{{{ matrix.python-version }}}}
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: ${{{{ matrix.python-version }}}}
+        python-version: ${{ matrix.python-version }}
     
     - name: Install dependencies
       run: |
@@ -718,3 +770,18 @@ setup(
         # This could be expanded to generate various template files
         # For now, return a placeholder
         return f"# Generated {template_name} for {capsule.manifest.get('name', 'project')}\n"
+    
+    def _generate_github_actions(self, capsule: QLCapsule) -> str:
+        """Override parent method to always use intelligent CI/CD generation"""
+        # Block the parent's method to ensure we use intelligent CI/CD
+        # This method is called by the parent during push_capsule_atomic
+        # By overriding it, we ensure the parent doesn't create a basic CI/CD
+        # The intelligent CI/CD is already added in _create_intelligent_structure
+        
+        # Check if we already have an intelligent CI/CD in the capsule
+        if ".github/workflows/ci.yml" in capsule.source_code:
+            # Return the existing intelligent CI/CD
+            return capsule.source_code[".github/workflows/ci.yml"]
+        
+        # Otherwise, generate a basic one (this shouldn't happen if intelligent structure is used)
+        return super()._generate_github_actions(capsule)

@@ -351,8 +351,14 @@ class GitHubIntegrationV2:
             # Add .gitignore
             files[".gitignore"] = self._generate_gitignore(capsule)
             
-            # Add GitHub Actions workflow
-            files[".github/workflows/ci.yml"] = self._generate_github_actions(capsule)
+            # Add GitHub Actions workflow if not already in capsule
+            # This allows subclasses to provide their own CI/CD
+            ci_path = ".github/workflows/ci.yml"
+            if ci_path not in files and ci_path not in capsule.source_code:
+                files[ci_path] = self._generate_github_actions(capsule)
+            elif ci_path in capsule.source_code:
+                # Use the CI/CD file from the capsule (likely from intelligent generator)
+                files[ci_path] = capsule.source_code[ci_path]
             
             # Create all files in a single atomic commit
             owner = repo['owner']['login']

@@ -12,6 +12,8 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.common import RetryPolicy
+from uuid import uuid4
+# httpx import moved inside activities to avoid workflow sandbox issues
 
 # Configure logging
 logging.basicConfig(
@@ -20,10 +22,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Activity timeout configurations
-ACTIVITY_TIMEOUT = timedelta(minutes=10)  # Increased from 5 to 10 minutes
-LONG_ACTIVITY_TIMEOUT = timedelta(minutes=45)  # Increased from 30 to 45 minutes
-HEARTBEAT_TIMEOUT = timedelta(minutes=5)  # Increased from 60 seconds to 5 minutes for production stability
+# Activity timeout configurations - Production-grade settings
+ACTIVITY_TIMEOUT = timedelta(minutes=30)  # Increased for enterprise workloads
+LONG_ACTIVITY_TIMEOUT = timedelta(minutes=120)  # 2 hours for complex enterprise workflows
+HEARTBEAT_TIMEOUT = timedelta(minutes=15)  # Longer heartbeat timeout for stability
+HEARTBEAT_INTERVAL = 20  # Send heartbeat every 20 seconds (more frequent)
+
+# Workflow configuration
+MAX_WORKFLOW_DURATION = timedelta(hours=3)  # Maximum workflow duration
+WORKFLOW_TASK_TIMEOUT = timedelta(minutes=10)  # Timeout for workflow tasks
+
+# Service call timeouts
+SERVICE_CALL_TIMEOUT = 180.0  # 3 minutes for service calls
+LLM_CALL_TIMEOUT = 300.0  # 5 minutes for LLM calls
 
 # Retry policy for activities
 DEFAULT_RETRY_POLICY = RetryPolicy(
@@ -85,6 +96,36 @@ class SandboxResult:
     error: Optional[str]
     execution_time: float
     resource_usage: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class AgentExecution:
+    """Agent execution details"""
+    task_id: str
+    agent_tier: str
+    start_time: str  # ISO format
+    end_time: Optional[str] = None
+    status: str = "pending"  # pending, running, completed, failed
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    retries: int = 0
+
+@dataclass 
+class SharedContext:
+    """Shared context across workflow execution"""
+    request_id: str
+    tenant_id: str
+    user_id: str
+    file_structure: Dict[str, Any]
+    architecture_pattern: str
+    quality_requirements: Dict[str, Any]
+    security_context: Dict[str, Any]
+    performance_targets: Dict[str, Any]
+    created_at: str  # ISO format
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SharedContext':
+        """Create SharedContext from dictionary"""
+        return cls(**data)
 
 @dataclass
 class HITLRequest:
@@ -303,6 +344,101 @@ async def select_agent_tier_activity(task: Dict[str, Any]) -> str:
         return complexity_to_tier.get(task["complexity"], "T1")
 
 
+async def call_agent_factory(client: Any, execution_input: Dict[str, Any]) -> Any:
+    """Call agent factory with retry protection, heartbeats, and circuit breaker"""
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            # Send heartbeat before each attempt
+            if activity.in_activity():
+                activity.heartbeat(f"Agent factory call attempt {attempt + 1}/{max_retries}")
+            
+            # Add request ID for tracing
+            request_id = execution_input.get('request_id', 'unknown')
+            activity.logger.info(f"Calling agent factory for request {request_id}, attempt {attempt + 1}")
+            
+            # Start async heartbeat task
+            heartbeat_task = None
+            if activity.in_activity():
+                heartbeat_task = asyncio.create_task(_send_periodic_heartbeats("agent_factory", HEARTBEAT_INTERVAL))
+            
+            try:
+                response = await client.post(
+                    f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
+                    json=execution_input,
+                    timeout=SERVICE_CALL_TIMEOUT
+                )
+                
+                # Log response time
+                activity.logger.info(f"Agent factory responded with status {response.status_code}")
+                
+                if response.status_code >= 500 and attempt < max_retries - 1:
+                    activity.logger.warning(f"Agent factory returned {response.status_code}, retrying...")
+                    await asyncio.sleep(retry_delay * (2 ** attempt))
+                    continue
+                    
+                return response
+                
+            finally:
+                # Cancel heartbeat task
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+                        
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            activity.logger.error(f"Agent factory call failed: {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay * (2 ** attempt))
+                continue
+            raise
+        except Exception as e:
+            activity.logger.error(f"Unexpected error calling agent factory: {str(e)}")
+            raise
+
+
+async def _send_periodic_heartbeats(service_name: str, interval: int):
+    """Send periodic heartbeats during long-running operations"""
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            if activity.in_activity():
+                activity.heartbeat(f"Processing with {service_name}...")
+        except asyncio.CancelledError:
+            break
+
+
+async def call_validation_service(client: Any, validation_input: Dict[str, Any]) -> Any:
+    """Call validation service with retry protection and heartbeats"""
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            # Send heartbeat before each attempt
+            if activity.in_activity():
+                activity.heartbeat(f"Validation service call attempt {attempt + 1}/{max_retries}")
+            
+            response = await client.post(
+                f"http://validation-mesh:{settings.VALIDATION_MESH_PORT}/validate/code",
+                json=validation_input,
+                timeout=120.0
+            )
+            if response.status_code >= 500 and attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay * (2 ** attempt))
+                continue
+            return response
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay * (2 ** attempt))
+                continue
+            raise
+
+
 @activity.defn
 async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str, shared_context_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a single task using the selected agent tier with TDD integration"""
@@ -313,6 +449,57 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
     
     # Send heartbeat for task start
     activity.heartbeat(f"Starting task execution: {task['task_id']}")
+    
+    # Check cache for similar tasks first
+    async with httpx.AsyncClient(timeout=30.0) as cache_client:
+        try:
+            # Search for similar patterns in vector memory
+            activity.logger.info(f"Checking cache for similar task type: {task.get('type')}")
+            
+            similar_response = await cache_client.post(
+                f"http://vector-memory:{settings.VECTOR_MEMORY_PORT}/search/similar",
+                json={
+                    "query": task.get('description', ''),
+                    "task_type": task.get('type'),
+                    "limit": 3,
+                    "similarity_threshold": 0.85  # High threshold for code reuse
+                }
+            )
+            
+            if similar_response.status_code == 200:
+                similar_results = similar_response.json()
+                
+                # Check if we have a highly similar task result we can adapt
+                if similar_results.get('results'):
+                    best_match = similar_results['results'][0]
+                    similarity_score = best_match.get('similarity', 0)
+                    
+                    if similarity_score > 0.85:
+                        activity.logger.info(f"Found cached result with {similarity_score:.2%} similarity")
+                        
+                        # Use cached result directly if very similar
+                        if similarity_score > 0.95 and best_match.get('result'):
+                            cached_result = best_match.get('result', {})
+                            if cached_result.get('output') and cached_result.get('status') == 'completed':
+                                activity.logger.info("Using cached result directly (>95% similarity)")
+                                
+                                # Return cached result with updated task_id
+                                return {
+                                    "task_id": task["task_id"],
+                                    "status": "completed",
+                                    "output_type": cached_result.get('output_type', 'code'),
+                                    "output": cached_result.get('output'),
+                                    "execution_time": 0.5,  # Near-instant from cache
+                                    "confidence_score": min(similarity_score * 0.98, 0.95),
+                                    "agent_tier_used": tier,
+                                    "metadata": {
+                                        "cached": True,
+                                        "cache_similarity": similarity_score,
+                                        "cache_hit": True
+                                    }
+                                }
+        except Exception as e:
+            activity.logger.warning(f"Cache check failed: {e}, proceeding with normal execution")
     
     # Extract language context and enhance task description
     preferred_language = task.get("context", {}).get("preferred_language", "python")
@@ -416,10 +603,7 @@ async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str, sh
         # Send heartbeat before agent service call
         activity.heartbeat(f"Calling agent service for task: {task['task_id']}")
         
-        response = await client.post(
-            f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
-            json=execution_input
-        )
+        response = await call_agent_factory(client, execution_input)
         
         execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
         
@@ -547,6 +731,7 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
     """Validate execution result with full validation pipeline"""
     import httpx
     from ..common.config import settings
+    from ..validation.enhanced_validator import enhanced_validator
     
     activity.logger.info(f"Validating result for task: {task['task_id']}")
     
@@ -599,18 +784,17 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
         activity.heartbeat(f"Calling validation service for task: {task['task_id']}")
         
         # Run full validation pipeline
-        response = await client.post(
-            f"http://validation-mesh:{settings.VALIDATION_MESH_PORT}/validate/code",
-            json={
-                "code": code,
-                "language": language,
-                "validators": ["syntax", "style", "security", "types", "runtime"],
-                "context": {
-                    "task_type": task["type"],
-                    "requirements": task.get("description", "")
-                }
+        validation_input = {
+            "code": code,
+            "language": language,
+            "validators": ["syntax", "style", "security", "types", "runtime"],
+            "context": {
+                "task_type": task["type"],
+                "requirements": task.get("description", "")
             }
-        )
+        }
+        
+        response = await call_validation_service(client, validation_input)
         
         if response.status_code != 200:
             return {
@@ -636,6 +820,38 @@ async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any])
         )
         
         validation_result["requires_human_review"] = confidence < 0.7 or critical_issues
+        
+        # Perform enhanced validation
+        enhanced_result = await enhanced_validator.validate_code_quality(code, language)
+        
+        # Merge enhanced validation results
+        if enhanced_result["issues"]:
+            # Add enhanced issues to checks
+            for issue in enhanced_result["issues"]:
+                validation_result.setdefault("checks", []).append({
+                    "name": f"enhanced_{issue['type']}",
+                    "type": issue["type"],
+                    "status": "failed" if issue["severity"] in ["critical", "high"] else "warning",
+                    "message": issue["message"],
+                    "severity": issue["severity"],
+                    "line_number": issue.get("line_number"),
+                    "suggestion": issue.get("suggestion")
+                })
+            
+            # Update confidence score based on security issues
+            if enhanced_result["critical_issues"] > 0:
+                validation_result["confidence_score"] *= 0.5  # Halve confidence for critical issues
+                validation_result["requires_human_review"] = True
+            elif enhanced_result["high_issues"] > 0:
+                validation_result["confidence_score"] *= 0.8  # Reduce confidence for high issues
+            
+            # Add security score to metadata
+            validation_result.setdefault("metadata", {})["security_score"] = enhanced_result["security_score"]
+            validation_result["metadata"]["enhanced_validation"] = {
+                "total_issues": enhanced_result["total_issues"],
+                "critical_issues": enhanced_result["critical_issues"],
+                "high_issues": enhanced_result["high_issues"]
+            }
         
         return validation_result
 
@@ -1018,6 +1234,9 @@ async def create_ql_capsule_activity(
     # Send heartbeat for capsule creation start
     activity.heartbeat(f"Starting capsule creation for request: {request_id}")
     
+    # Import intelligent file organizer
+    from .intelligent_file_organizer import organize_code_intelligently
+    
     # Extract execution context from first task (all tasks should have same context)
     execution_context = {}
     if tasks:
@@ -1033,11 +1252,22 @@ async def create_ql_capsule_activity(
     # Debug: Log the inputs
     activity.logger.info(f"DEBUG: Processing {len(tasks)} tasks and {len(results)} results")
     
-    # Organize outputs by type using execution context
+    # Organize outputs by type using intelligent LLM-powered analysis
     source_code = {}
     tests = {}
     documentation = []
     deployment_config = {}
+    config_files = {}
+    script_files = {}
+    
+    # Build project context for the organizer
+    project_context = {
+        'file_structure': shared_context.file_structure.__dict__,
+        'architecture_pattern': shared_context.architecture_pattern,
+        'project_structure': shared_context.project_structure,
+        'language': shared_context.file_structure.primary_language,
+        'main_file_name': shared_context.file_structure.main_file_name
+    }
     
     for i, (task, result) in enumerate(zip(tasks, results)):
         # Send heartbeat for each task processing
@@ -1052,6 +1282,70 @@ async def create_ql_capsule_activity(
             if isinstance(output, dict):
                 code = output.get("code", output.get("content", ""))
                 actual_language = output.get("language", "python")
+                
+                # Skip empty code
+                if not code or not code.strip():
+                    activity.logger.info(f"DEBUG: Skipping task {i}: no code content")
+                    continue
+                
+                # Build task context for intelligent organization
+                task_context = {
+                    'type': task.get('type', ''),
+                    'task_id': task.get('task_id', ''),
+                    'description': task.get('description', ''),
+                    'language': actual_language,
+                    'metadata': task.get('metadata', {})
+                }
+                
+                try:
+                    # Use intelligent LLM-powered organization
+                    activity.logger.info(f"Using intelligent organization for task {i}")
+                    organized = await organize_code_intelligently(
+                        code=code,
+                        task_context=task_context,
+                        project_context=project_context
+                    )
+                    
+                    # Add organized files to appropriate collections
+                    if organized['success']:
+                        # Add source files
+                        for filename, content in organized['source_files'].items():
+                            if len(source_code) == 0 and 'main' in filename.lower():
+                                # Use the shared context main file name for the first main file
+                                source_code[shared_context.file_structure.main_file_name] = content
+                            else:
+                                source_code[filename] = content
+                        
+                        # Add test files
+                        tests.update(organized['test_files'])
+                        
+                        # Add documentation
+                        for filename, content in organized['doc_files'].items():
+                            documentation.append(content)
+                        
+                        # Add config and script files
+                        config_files.update(organized['config_files'])
+                        script_files.update(organized['script_files'])
+                        
+                        activity.logger.info(
+                            f"Task {i} organized: {len(organized['source_files'])} source, "
+                            f"{len(organized['test_files'])} test, {len(organized['doc_files'])} doc files"
+                        )
+                    else:
+                        # Fallback to simple addition
+                        activity.logger.warning(f"Intelligent organization failed for task {i}, using fallback")
+                        if task.get('type') == 'test_creation':
+                            tests[f"test_{i}.{actual_language}"] = code
+                        else:
+                            source_code[f"code_{i}.{actual_language}"] = code
+                            
+                except Exception as e:
+                    activity.logger.error(f"Error in intelligent organization: {e}")
+                    # Fallback to simple addition
+                    if task.get('type') == 'test_creation':
+                        tests[f"test_{i}.{actual_language}"] = code
+                    else:
+                        source_code[f"code_{i}.{actual_language}"] = code
                 
                 # If code is actually a stringified dict, parse it
                 if isinstance(code, str) and code.strip().startswith("{") and "'content'" in code:
@@ -1142,25 +1436,69 @@ async def create_ql_capsule_activity(
                         activity.logger.info(f"DEBUG: Added documentation")
                     else:
                         # This is source code
-                        # Use shared context for consistent file naming
-                        if len(source_code) == 0:
-                            # First functional code - use shared context main file name
-                            filename = shared_context.file_structure.main_file_name
-                            source_code[filename] = code
-                            activity.logger.info(f"DEBUG: Added main file: {filename} from shared context")
+                        # Check if this code contains both implementation and tests
+                        if "class Test" in code or "def test_" in code:
+                            # This code contains both implementation and tests - split them
+                            activity.logger.info(f"DEBUG: Code contains both implementation and tests, splitting...")
+                            
+                            # Extract the actual function/class definitions
+                            lines = code.split('\n')
+                            impl_lines = []
+                            test_lines = []
+                            in_test_class = False
+                            in_test_function = False
+                            
+                            for line in lines:
+                                if line.strip().startswith("class Test") or line.strip().startswith("def test_"):
+                                    in_test_class = True
+                                    test_lines.append(line)
+                                elif line.strip().startswith("class ") and in_test_class:
+                                    in_test_class = False
+                                    impl_lines.append(line)
+                                elif in_test_class or in_test_function:
+                                    test_lines.append(line)
+                                else:
+                                    impl_lines.append(line)
+                            
+                            # Save implementation to source_code
+                            impl_code = '\n'.join(impl_lines).strip()
+                            if impl_code and "def " in impl_code:
+                                if len(source_code) == 0:
+                                    source_code[shared_context.file_structure.main_file_name] = impl_code
+                                    activity.logger.info(f"DEBUG: Extracted implementation to main file")
+                                else:
+                                    # Don't replace existing simple implementation with complex one
+                                    current_main = source_code.get(shared_context.file_structure.main_file_name, "")
+                                    if not current_main or "def " not in current_main:
+                                        source_code[shared_context.file_structure.main_file_name] = impl_code
+                                        activity.logger.info(f"DEBUG: Replaced empty main with implementation")
+                            
+                            # Save tests
+                            test_code = '\n'.join(test_lines).strip()
+                            if test_code:
+                                test_filename = f"test_{shared_context.file_structure.main_file_name}"
+                                tests[test_filename] = test_code
+                                activity.logger.info(f"DEBUG: Extracted tests to {test_filename}")
                         else:
-                            # Additional functional code - choose the best one for main.py
-                            # If current main file is shorter or less complete, replace it
-                            current_main = source_code.get(shared_context.file_structure.main_file_name, "")
-                            if len(code) > len(current_main) or "def " in code and "def " not in current_main:
-                                # Replace with better code
-                                source_code[shared_context.file_structure.main_file_name] = code
-                                activity.logger.info(f"DEBUG: Replaced main file with better code from task {i}")
-                            else:
-                                # Keep as additional module  
-                                filename = f"module_{i}.{ext}"
+                            # Regular source code without tests
+                            # Use shared context for consistent file naming
+                            if len(source_code) == 0:
+                                # First functional code - use shared context main file name
+                                filename = shared_context.file_structure.main_file_name
                                 source_code[filename] = code
-                                activity.logger.info(f"DEBUG: Added source file: {filename}")
+                                activity.logger.info(f"DEBUG: Added main file: {filename} from shared context")
+                            else:
+                                # Additional functional code - only replace if current is empty or not functional
+                                current_main = source_code.get(shared_context.file_structure.main_file_name, "")
+                                if not current_main or "def " not in current_main:
+                                    # Current main is empty or not functional, replace it
+                                    source_code[shared_context.file_structure.main_file_name] = code
+                                    activity.logger.info(f"DEBUG: Replaced non-functional main file")
+                                else:
+                                    # Keep as additional module  
+                                    filename = f"module_{i}.{ext}"
+                                    source_code[filename] = code
+                                    activity.logger.info(f"DEBUG: Added source file: {filename}")
                 else:
                     activity.logger.info(f"DEBUG: Skipping task {i}: no code content")
     
@@ -1497,6 +1835,156 @@ async def prepare_delivery_activity(capsule_id: str, request: Dict[str, Any]) ->
             }
 
 
+@activity.defn
+async def save_workflow_checkpoint_activity(
+    workflow_id: str,
+    tasks_completed: List[Dict[str, Any]],
+    shared_context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Save intermediate workflow results to prevent loss on timeout"""
+    import redis.asyncio as redis
+    
+    activity.logger.info(f"Saving checkpoint for workflow: {workflow_id}")
+    
+    checkpoint_data = {
+        "workflow_id": workflow_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "completed_tasks": tasks_completed,
+        "shared_context": shared_context,
+        "status": "in_progress"
+    }
+    
+    try:
+        # Initialize Redis client
+        redis_client = await redis.from_url(
+            f"redis://redis:6379/0",
+            encoding="utf-8",
+            decode_responses=True
+        )
+        
+        # Save checkpoint with 2 hour TTL
+        checkpoint_key = f"checkpoint:{workflow_id}"
+        await redis_client.setex(
+            checkpoint_key,
+            7200,  # 2 hours TTL
+            json.dumps(checkpoint_data)
+        )
+        
+        activity.logger.info(f"Checkpoint saved successfully for workflow: {workflow_id}")
+        
+        await redis_client.close()
+        
+        return {
+            "saved": True,
+            "checkpoint_key": checkpoint_key,
+            "task_count": len(tasks_completed)
+        }
+        
+    except Exception as e:
+        activity.logger.error(f"Failed to save checkpoint: {str(e)}")
+        return {
+            "saved": False,
+            "error": str(e)
+        }
+
+
+@activity.defn
+async def load_workflow_checkpoint_activity(workflow_id: str) -> Optional[Dict[str, Any]]:
+    """Load workflow checkpoint if exists"""
+    import redis.asyncio as redis
+    
+    activity.logger.info(f"Loading checkpoint for workflow: {workflow_id}")
+    
+    try:
+        # Initialize Redis client
+        redis_client = await redis.from_url(
+            f"redis://redis:6379/0",
+            encoding="utf-8",
+            decode_responses=True
+        )
+        
+        checkpoint_key = f"checkpoint:{workflow_id}"
+        checkpoint_data = await redis_client.get(checkpoint_key)
+        
+        await redis_client.close()
+        
+        if checkpoint_data:
+            activity.logger.info(f"Checkpoint found for workflow: {workflow_id}")
+            return json.loads(checkpoint_data)
+        else:
+            activity.logger.info(f"No checkpoint found for workflow: {workflow_id}")
+            return None
+            
+    except Exception as e:
+        activity.logger.error(f"Failed to load checkpoint: {str(e)}")
+        return None
+
+
+@activity.defn
+async def stream_workflow_results_activity(workflow_id: str, batch_idx: int, 
+                                         batch_results: List[Dict[str, Any]], 
+                                         total_batches: int) -> Dict[str, Any]:
+    """Stream partial results back to client via Redis pub/sub or similar mechanism"""
+    activity.logger.info(f"Streaming results for workflow {workflow_id}, batch {batch_idx + 1}/{total_batches}")
+    
+    try:
+        # Initialize Redis client
+        redis_client = await redis.from_url(
+            f"redis://redis:6379/0",
+            encoding="utf-8",
+            decode_responses=True
+        )
+        
+        # Create streaming update
+        stream_update = {
+            "workflow_id": workflow_id,
+            "batch_index": batch_idx,
+            "total_batches": total_batches,
+            "batch_size": len(batch_results),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "completed_tasks": [r["task_id"] for r in batch_results if r["execution"].get("status") == "completed"],
+            "failed_tasks": [r["task_id"] for r in batch_results if r["execution"].get("status") == "failed"],
+            "progress_percentage": round((batch_idx + 1) / total_batches * 100, 2)
+        }
+        
+        # Store in Redis stream for real-time updates
+        stream_key = f"workflow:stream:{workflow_id}"
+        await redis_client.xadd(stream_key, stream_update)
+        
+        # Also publish to pub/sub channel for real-time listeners
+        channel = f"workflow:updates:{workflow_id}"
+        await redis_client.publish(channel, json.dumps(stream_update))
+        
+        # Store latest results for polling clients
+        results_key = f"workflow:results:{workflow_id}:batch:{batch_idx}"
+        await redis_client.setex(
+            results_key, 
+            3600,  # 1 hour TTL
+            json.dumps({
+                "batch_results": [{"task_id": r["task_id"], 
+                                 "status": r["execution"].get("status"),
+                                 "output_type": r["execution"].get("output_type")}
+                                for r in batch_results],
+                "update": stream_update
+            })
+        )
+        
+        await redis_client.close()
+        
+        return {
+            "streamed": True,
+            "batch_index": batch_idx,
+            "tasks_streamed": len(batch_results)
+        }
+        
+    except Exception as e:
+        activity.logger.error(f"Failed to stream results: {str(e)}")
+        return {
+            "streamed": False,
+            "error": str(e)
+        }
+
+
 # Workflow - Production-ready orchestration
 @workflow.defn
 class QLPWorkflow:
@@ -1536,113 +2024,123 @@ class QLPWorkflow:
             # Step 2: Create execution plan based on dependencies
             execution_order = self._topological_sort(tasks, dependencies)
             
-            # Step 3: Execute tasks in order (respecting dependencies)
+            # Step 3: Execute tasks with parallel processing for independent tasks
             task_results = {}
             completed_tasks = set()
             
-            for task_id in execution_order:
-                task = next(t for t in tasks if t["task_id"] == task_id)
+            # Group tasks into parallel execution batches
+            execution_batches = self._create_parallel_execution_batches(tasks, dependencies, execution_order)
+            workflow.logger.info(f"Created {len(execution_batches)} execution batches for parallel processing")
+            
+            # Process each batch in order (batches must be sequential, tasks within batch can be parallel)
+            for batch_idx, batch_tasks in enumerate(execution_batches):
+                workflow.logger.info(f"Processing batch {batch_idx + 1}/{len(execution_batches)} with {len(batch_tasks)} tasks")
                 
-                # Wait for dependencies
-                task_deps = dependencies.get(task_id, [])
-                for dep_id in task_deps:
-                    if dep_id not in completed_tasks:
-                        workflow.logger.warning(f"Dependency {dep_id} not completed for task {task_id}")
-                        continue
+                # Execute all tasks in this batch concurrently
+                batch_futures = []
                 
-                # Select appropriate agent tier
-                tier = await workflow.execute_activity(
-                    select_agent_tier_activity,
-                    task,
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=DEFAULT_RETRY_POLICY
-                )
-                
-                # Execute task with shared context
-                exec_result = await workflow.execute_activity(
-                    execute_task_activity,
-                    args=[task, tier, request["request_id"], shared_context_dict],
-                    start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,
-                    heartbeat_timeout=HEARTBEAT_TIMEOUT,
-                    retry_policy=DEFAULT_RETRY_POLICY
-                )
-                
-                # Validate result
-                validation_result = await workflow.execute_activity(
-                    validate_result_activity,
-                    args=[exec_result, task],
-                    start_to_close_timeout=ACTIVITY_TIMEOUT,
-                    retry_policy=DEFAULT_RETRY_POLICY
-                )
-                
-                # TEMPORARY: Skip individual task sandbox execution to focus on main issue
-                sandbox_result = None
-                # if (exec_result.get("status") == "completed" and 
-                #     exec_result.get("output_type") == "code" and
-                #     validation_result.get("overall_status") != "failed"):
-                #     
-                #     output = exec_result.get("output", {})
-                #     if isinstance(output, dict):
-                #         code = output.get("code", "")
-                #         language = output.get("language", "python")
-                #     else:
-                #         code = str(output)
-                #         language = "python"
-                #     
-                #     if code:
-                #         sandbox_result = await workflow.execute_activity(
-                #             execute_in_sandbox_activity,
-                #             args=[code, language, None],
-                #             start_to_close_timeout=ACTIVITY_TIMEOUT,
-                #             retry_policy=DEFAULT_RETRY_POLICY
-                #         )
-                
-                # Human review if needed
-                review_result = None
-                if validation_result.get("requires_human_review"):
-                    reason = "Low confidence" if validation_result.get("confidence_score", 1) < 0.7 else "Critical issues found"
+                for task in batch_tasks:
+                    task_id = task["task_id"]
                     
-                    review_result = await workflow.execute_activity(
-                        request_aitl_review_activity,
-                        args=[task, exec_result, validation_result, reason],
-                        start_to_close_timeout=timedelta(hours=2),  # Allow time for human review
-                        heartbeat_timeout=timedelta(minutes=1),
-                        retry_policy=RetryPolicy(maximum_attempts=1)  # Don't retry human reviews
+                    # Verify dependencies are met (should be by design of batching)
+                    task_deps = dependencies.get(task_id, [])
+                    deps_met = all(dep_id in completed_tasks for dep_id in task_deps)
+                    
+                    if not deps_met:
+                        workflow.logger.error(f"Dependencies not met for task {task_id} in batch {batch_idx}")
+                        continue
+                    
+                    # Create a coroutine for this task's execution pipeline
+                    task_future = self._execute_task_pipeline(
+                        task, request["request_id"], shared_context_dict
+                    )
+                    batch_futures.append((task_id, task_future))
+                
+                # Execute all tasks in batch concurrently
+                if batch_futures:
+                    # Use asyncio.gather to run tasks in parallel
+                    task_ids = [task_id for task_id, _ in batch_futures]
+                    task_coroutines = [future for _, future in batch_futures]
+                    
+                    workflow.logger.info(f"Executing {len(task_coroutines)} tasks in parallel: {task_ids}")
+                    
+                    # Execute all coroutines concurrently
+                    batch_results = await asyncio.gather(*task_coroutines, return_exceptions=True)
+                    
+                    # Process results
+                    for (task_id, _), result in zip(batch_futures, batch_results):
+                        if isinstance(result, Exception):
+                            workflow.logger.error(f"Task {task_id} failed with exception: {result}")
+                            # Create error result
+                            task_results[task_id] = {
+                                "task_id": task_id,
+                                "execution": {
+                                    "status": "failed",
+                                    "output_type": "error",
+                                    "output": {"error": str(result)},
+                                    "execution_time": 0,
+                                    "confidence_score": 0,
+                                    "agent_tier_used": "unknown"
+                                },
+                                "validation": {"overall_status": "failed"},
+                                "sandbox": None,
+                                "review": None
+                            }
+                        else:
+                            task_results[task_id] = result
+                            if result["execution"].get("status") == "completed":
+                                completed_tasks.add(task_id)
+                
+                # Continue with original logic after batch
+                # The rest of the loop will be removed as we're processing in batches now
+                # Save checkpoint and stream results after each batch completes
+                if completed_tasks:
+                    # Save checkpoint
+                    await workflow.execute_activity(
+                        save_workflow_checkpoint_activity,
+                        args=[request["request_id"], list(task_results.values()), shared_context_dict],
+                        start_to_close_timeout=timedelta(minutes=1),
+                        retry_policy=RetryPolicy(maximum_attempts=2)
                     )
                     
-                    if not review_result.get("approved"):
-                        workflow_result["errors"].append({
-                            "task_id": task["task_id"],
-                            "error": "Human review rejected",
-                            "reason": review_result.get("reason", "No reason provided"),
-                            "reviewer": review_result.get("reviewer")
-                        })
-                        exec_result["status"] = "rejected"
-                
-                # Store complete task result
-                task_result = {
-                    "task_id": task["task_id"],
-                    "execution": exec_result,
-                    "validation": validation_result,
-                    "sandbox": sandbox_result,
-                    "review": review_result
-                }
-                
-                task_results[task_id] = task_result
-                
-                if exec_result.get("status") == "completed":
-                    completed_tasks.add(task_id)
-                    workflow_result["tasks_completed"] += 1
-                
-                # Add to outputs
-                workflow_result["outputs"].append(task_result)
+                    # Stream batch results for real-time updates
+                    batch_results_for_streaming = [task_results[task["task_id"]] 
+                                                 for task in batch_tasks 
+                                                 if task["task_id"] in task_results]
+                    
+                    await workflow.execute_activity(
+                        stream_workflow_results_activity,
+                        args=[request["request_id"], batch_idx, batch_results_for_streaming, len(execution_batches)],
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=RetryPolicy(maximum_attempts=2)
+                    )
+            
+            # After all batches complete, update workflow result
+            workflow_result["tasks_completed"] = len(completed_tasks)
+            workflow_result["outputs"] = list(task_results.values())
             
             # Step 4: Create QLCapsule with all artifacts
             if workflow_result["tasks_completed"] > 0:
+                # Ensure results are in the same order as tasks
+                ordered_results = []
+                for task in tasks:
+                    task_id = task["task_id"]
+                    if task_id in task_results:
+                        ordered_results.append(task_results[task_id])
+                    else:
+                        # Add placeholder for missing results
+                        ordered_results.append({
+                            "task_id": task_id,
+                            "execution": {
+                                "status": "skipped",
+                                "output": {}
+                            }
+                        })
+                
                 capsule_result = await workflow.execute_activity(
                     create_ql_capsule_activity,
-                    args=[request["request_id"], tasks, list(task_results.values()), shared_context_dict],
-                    start_to_close_timeout=ACTIVITY_TIMEOUT,
+                    args=[request["request_id"], tasks, ordered_results, shared_context_dict],
+                    start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,  # Use longer timeout for capsule creation
                     retry_policy=DEFAULT_RETRY_POLICY
                 )
                 
@@ -1749,6 +2247,45 @@ class QLPWorkflow:
                         workflow_result["github_url"] = github_result.get("repository_url")
                         workflow_result["metadata"]["github_push"] = github_result
                         workflow.logger.info(f"Successfully pushed to GitHub: {github_result.get('repository_url')}")
+                        
+                        # Monitor and fix CI/CD if enabled
+                        if metadata.get("monitor_ci", True):
+                            workflow.logger.info("Starting CI/CD monitoring and auto-fix")
+                            
+                            # Use the GitHub token we already have from metadata
+                            # Don't access os.getenv in workflow context
+                            monitor_params = {
+                                "repo_url": github_result.get("repository_url"),
+                                "github_token": github_token,  # Use the token from metadata
+                                "workflow_file": ".github/workflows/ci.yml",
+                                "max_duration_minutes": 15,
+                                "auto_fix": True
+                            }
+                            
+                            try:
+                                monitor_result = await workflow.execute_activity(
+                                    monitor_github_actions_activity,
+                                    monitor_params,
+                                    start_to_close_timeout=timedelta(minutes=20),
+                                    heartbeat_timeout=timedelta(minutes=5),
+                                    retry_policy=RetryPolicy(
+                                        maximum_attempts=1  # Don't retry monitoring
+                                    )
+                                )
+                                
+                                workflow_result["metadata"]["ci_monitoring"] = monitor_result
+                                
+                                if monitor_result.get("success"):
+                                    workflow.logger.info("CI/CD passed after monitoring/fixes")
+                                else:
+                                    workflow.logger.warning(f"CI/CD monitoring completed with issues: {monitor_result.get('reason')}")
+                                    
+                            except Exception as e:
+                                workflow.logger.error(f"CI/CD monitoring failed: {str(e)}")
+                                workflow_result["metadata"]["ci_monitoring"] = {
+                                    "success": False,
+                                    "error": str(e)
+                                }
                     else:
                         workflow.logger.error(f"GitHub push failed: {github_result.get('error')}")
                         workflow_result["errors"].append({
@@ -2001,9 +2538,235 @@ class QLPWorkflow:
             return task_ids
         
         return result
+    
+    def _create_parallel_execution_batches(self, tasks: List[Dict[str, Any]], 
+                                         dependencies: Dict[str, List[str]], 
+                                         execution_order: List[str]) -> List[List[Dict[str, Any]]]:
+        """Create batches of tasks that can be executed in parallel with priority ordering"""
+        batches = []
+        processed = set()
+        task_map = {t["task_id"]: t for t in tasks}
+        
+        # Build reverse dependency map (task -> tasks that depend on it)
+        reverse_deps = {}
+        for task_id in execution_order:
+            reverse_deps[task_id] = []
+        
+        for task_id, deps in dependencies.items():
+            for dep in deps:
+                if dep in reverse_deps:
+                    reverse_deps[dep].append(task_id)
+        
+        # Define task priority (higher number = higher priority)
+        def get_task_priority(task: Dict[str, Any]) -> int:
+            """Assign priority based on task characteristics"""
+            priority = 0
+            
+            # Complexity-based priority
+            complexity_priority = {
+                "meta": 40,      # Meta tasks are highest priority
+                "complex": 30,   # Complex tasks next
+                "medium": 20,    # Medium tasks
+                "simple": 10     # Simple tasks last
+            }
+            priority += complexity_priority.get(task.get("complexity", "simple"), 10)
+            
+            # Type-based priority boost
+            task_type = task.get("type", "")
+            if "authentication" in task_type or "security" in task_type:
+                priority += 15  # Security-related tasks get priority
+            elif "database" in task_type or "schema" in task_type:
+                priority += 12  # Database setup is foundational
+            elif "api" in task_type or "endpoint" in task_type:
+                priority += 8   # API endpoints are important
+            elif "test" in task_type:
+                priority -= 5   # Tests can run later
+            
+            # Dependencies impact - tasks with more dependents get priority
+            dependent_count = len(reverse_deps.get(task["task_id"], []))
+            priority += min(dependent_count * 2, 10)  # Cap at 10 points
+            
+            return priority
+        
+        # Process tasks in topological order, grouping independent tasks
+        while len(processed) < len(execution_order):
+            # Find all tasks that can be executed now (dependencies satisfied)
+            ready_tasks = []
+            
+            for task_id in execution_order:
+                if task_id in processed:
+                    continue
+                    
+                # Check if all dependencies are processed
+                task_deps = dependencies.get(task_id, [])
+                if all(dep in processed for dep in task_deps):
+                    ready_tasks.append(task_map[task_id])
+            
+            if not ready_tasks:
+                # This shouldn't happen with valid topological sort
+                workflow.logger.error("No tasks ready for execution, possible circular dependency")
+                break
+            
+            # Sort ready tasks by priority (highest first)
+            ready_tasks.sort(key=get_task_priority, reverse=True)
+            
+            # Create batch - limit batch size for better resource management
+            max_batch_size = 5  # Configurable based on available resources
+            batch = ready_tasks[:max_batch_size]
+            
+            # Add batch and mark tasks as processed
+            batches.append(batch)
+            for task in batch:
+                processed.add(task["task_id"])
+        
+        # Log batch information for monitoring
+        for i, batch in enumerate(batches):
+            task_info = [(t["task_id"], t.get("type", "unknown"), t.get("complexity", "simple")) 
+                        for t in batch]
+            workflow.logger.info(f"Batch {i+1}: {len(batch)} tasks")
+            for task_id, task_type, complexity in task_info:
+                workflow.logger.info(f"  - {task_id} ({task_type}, {complexity})")
+        
+        return batches
+    
+    async def _execute_task_pipeline(self, task: Dict[str, Any], 
+                                   request_id: str, 
+                                   shared_context_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the complete pipeline for a single task"""
+        try:
+            # Select appropriate agent tier
+            tier = await workflow.execute_activity(
+                select_agent_tier_activity,
+                task,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=DEFAULT_RETRY_POLICY
+            )
+            
+            # Execute task with shared context
+            exec_result = await workflow.execute_activity(
+                execute_task_activity,
+                args=[task, tier, request_id, shared_context_dict],
+                start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,
+                heartbeat_timeout=HEARTBEAT_TIMEOUT,
+                retry_policy=DEFAULT_RETRY_POLICY
+            )
+            
+            # Validate result
+            validation_result = await workflow.execute_activity(
+                validate_result_activity,
+                args=[exec_result, task],
+                start_to_close_timeout=ACTIVITY_TIMEOUT,
+                retry_policy=DEFAULT_RETRY_POLICY
+            )
+            
+            # Skip sandbox for now (as in original code)
+            sandbox_result = None
+            
+            # Human review if needed
+            review_result = None
+            if validation_result.get("requires_human_review"):
+                reason = "Low confidence" if validation_result.get("confidence_score", 1) < 0.7 else "Critical issues found"
+                
+                review_result = await workflow.execute_activity(
+                    request_aitl_review_activity,
+                    args=[task, exec_result, validation_result, reason],
+                    start_to_close_timeout=timedelta(hours=2),
+                    heartbeat_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=1)
+                )
+                
+                if not review_result.get("approved"):
+                    exec_result["status"] = "rejected"
+            
+            # Return complete task result
+            return {
+                "task_id": task["task_id"],
+                "execution": exec_result,
+                "validation": validation_result,
+                "sandbox": sandbox_result,
+                "review": review_result
+            }
+            
+        except Exception as e:
+            workflow.logger.error(f"Task pipeline failed for {task['task_id']}: {str(e)}")
+            return {
+                "task_id": task["task_id"],
+                "execution": {
+                    "status": "failed",
+                    "output_type": "error",
+                    "output": {"error": str(e)},
+                    "execution_time": 0,
+                    "confidence_score": 0,
+                    "agent_tier_used": "unknown"
+                },
+                "validation": {"overall_status": "failed"},
+                "sandbox": None,
+                "review": None
+            }
 
 
 # Define push_to_github_activity directly here
+@activity.defn
+async def monitor_github_actions_activity(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Monitor and auto-fix GitHub Actions CI/CD"""
+    try:
+        from src.orchestrator.github_actions_monitor import monitor_and_fix_github_actions
+        
+        activity.logger.info(f"Starting GitHub Actions monitoring for {params['repo_url']}")
+        
+        # Get GitHub token, fallback to environment variable if not provided
+        github_token = params.get("github_token")
+        if not github_token:
+            import os
+            github_token = os.getenv("GITHUB_TOKEN")
+            if not github_token:
+                activity.logger.warning("GitHub token not found in params or environment")
+                return {
+                    "success": False,
+                    "error": "GitHub token required in params or GITHUB_TOKEN environment variable"
+                }
+        
+        # Send initial heartbeat
+        activity.heartbeat("Starting CI/CD monitoring")
+        
+        # Create async task for monitoring with periodic heartbeats
+        async def monitor_with_heartbeat():
+            # Start heartbeat task
+            async def send_heartbeats():
+                while True:
+                    await asyncio.sleep(30)
+                    activity.heartbeat("CI/CD monitoring in progress")
+            
+            heartbeat_task = asyncio.create_task(send_heartbeats())
+            
+            try:
+                # Run the actual monitoring (use the validated github_token)
+                result = await monitor_and_fix_github_actions(
+                    repo_url=params["repo_url"],
+                    github_token=github_token,  # Use the validated token
+                    workflow_file=params.get("workflow_file", ".github/workflows/ci.yml"),
+                    max_duration_minutes=params.get("max_duration_minutes", 15),
+                    auto_fix=params.get("auto_fix", True)
+                )
+                return result
+            finally:
+                # Cancel heartbeat task
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+        
+        return await monitor_with_heartbeat()
+        
+    except Exception as e:
+        activity.logger.error(f"GitHub Actions monitoring failed: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @activity.defn
 async def push_to_github_activity(params: Dict[str, Any]) -> Dict[str, Any]:
     """Push capsule to GitHub with enterprise structure"""
@@ -2250,7 +3013,11 @@ async def start_worker():
         create_ql_capsule_activity,
         llm_clean_code_activity,
         prepare_delivery_activity,
-        push_to_github_activity  # Add GitHub push activity
+        push_to_github_activity,  # Add GitHub push activity
+        monitor_github_actions_activity,  # Add GitHub Actions monitoring activity
+        save_workflow_checkpoint_activity,  # Add checkpoint saving activity
+        load_workflow_checkpoint_activity,  # Add checkpoint loading activity
+        stream_workflow_results_activity  # Add workflow streaming activity
     ]
     
     # Add marketing workflows and activities if available
@@ -2495,14 +3262,13 @@ async def _generate_tests_first(client, task: Dict[str, Any], tier: str, request
     }
     
     # Execute test generation
-    response = await client.post(
-        f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
-        json={
-            "task": test_task,
-            "tier": tier,
-            "context": {**task.get("context", {}), "generation_type": "tests_only"}
-        }
-    )
+    test_execution_input = {
+        "task": test_task,
+        "tier": tier,
+        "context": {**task.get("context", {}), "generation_type": "tests_only"}
+    }
+    
+    response = await call_agent_factory(client, test_execution_input)
     
     if response.status_code != 200:
         return {
@@ -2567,18 +3333,17 @@ async def _generate_code_for_tests(
     }
     
     # Execute code generation
-    response = await client.post(
-        f"http://agent-factory:{settings.AGENT_FACTORY_PORT}/execute",
-        json={
-            "task": code_task,
-            "tier": tier,
-            "context": {
-                **task.get("context", {}), 
-                "generation_type": "implementation_only",
-                "test_suite": tests_code
-            }
+    code_execution_input = {
+        "task": code_task,
+        "tier": tier,
+        "context": {
+            **task.get("context", {}), 
+            "generation_type": "implementation_only",
+            "test_suite": tests_code
         }
-    )
+    }
+    
+    response = await call_agent_factory(client, code_execution_input)
     
     if response.status_code != 200:
         return {

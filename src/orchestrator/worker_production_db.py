@@ -6,6 +6,7 @@ This is the production configuration with PostgreSQL storage enabled
 import asyncio
 import logging
 from datetime import timedelta
+from typing import Dict, Any
 from temporalio import workflow, activity
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -25,14 +26,28 @@ from src.orchestrator.worker_production import (
     # Activities
     decompose_request_activity,
     select_agent_tier_activity,
-    execute_task_activity,
-    validate_result_activity,
     execute_in_sandbox_activity,
     request_aitl_review_activity,
     llm_clean_code_activity,
     create_ql_capsule_activity,  # Import the original activity
     prepare_delivery_activity,  # Import the delivery preparation activity
     push_to_github_activity,  # Import the GitHub push activity
+    monitor_github_actions_activity,  # Import the GitHub Actions monitoring activity
+    save_workflow_checkpoint_activity,  # Import checkpoint activity
+    load_workflow_checkpoint_activity,  # Import load checkpoint activity
+    stream_workflow_results_activity,  # Import streaming activity
+)
+
+# Import original activities - we'll override them with enhanced versions below
+from src.orchestrator.worker_production import (
+    execute_task_activity as original_execute_task_activity,
+    validate_result_activity as original_validate_result_activity
+)
+
+# Import enhanced activities with enterprise heartbeat management
+from src.orchestrator.worker_production_enhanced import (
+    execute_task_activity_enhanced,
+    validate_result_activity_enhanced
 )
 
 # Import marketing workflows and activities
@@ -58,6 +73,17 @@ except ImportError as e:
 # Import the database-enabled capsule activity as well
 from src.orchestrator.activities.capsule_activities import create_ql_capsule_activity_with_db
 
+# Create wrapper activities with the correct names
+@activity.defn(name="execute_task_activity")
+async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str, shared_context_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrapper for enhanced execute task activity"""
+    return await execute_task_activity_enhanced(task, tier, request_id, shared_context_dict)
+
+@activity.defn(name="validate_result_activity")
+async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
+    """Wrapper for enhanced validate result activity"""
+    return await validate_result_activity_enhanced(result, task)
+
 
 async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "qlp-main"):
     """Run the production worker with database persistence"""
@@ -72,8 +98,8 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
     activities = [
         decompose_request_activity,
         select_agent_tier_activity,
-        execute_task_activity,
-        validate_result_activity,
+        execute_task_activity,  # Now uses enhanced version with heartbeat management
+        validate_result_activity,  # Now uses enhanced version with heartbeat management
         execute_in_sandbox_activity,
         request_aitl_review_activity,
         llm_clean_code_activity,
@@ -81,6 +107,10 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
         create_ql_capsule_activity_with_db,  # Database-enabled version
         prepare_delivery_activity,  # Delivery preparation activity
         push_to_github_activity,  # GitHub push activity
+        monitor_github_actions_activity,  # GitHub Actions monitoring
+        save_workflow_checkpoint_activity,  # Checkpoint saving
+        load_workflow_checkpoint_activity,  # Checkpoint loading
+        stream_workflow_results_activity,  # Results streaming
     ]
     
     # Add marketing workflows and activities if available
