@@ -210,3 +210,50 @@ qlp-storage/
 capsules/
 sandbox-executions/
 *_capsule_*/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Generated files
+generated/
+qlp-cli/generated/
+workflow_id.txt
+test_capsule.zip
+unnamed_capsule_*/
+
+# Test outputs
+test-results/
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Environment
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old
