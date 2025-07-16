@@ -1,0 +1,116 @@
+# Docker Compose override for Enterprise Mode
+# Use with: docker-compose -f docker-compose.platform.yml -f docker-compose.enterprise.yml up
+
+services:
+  # Override the temporal worker to use enterprise mode
+  temporal-worker:
+    environment:
+      ENTERPRISE_MODE: "false"
+      # Increased resource limits for enterprise workloads
+      WORKER_MAX_CONCURRENT_ACTIVITIES: 50
+      WORKER_MAX_CONCURRENT_WORKFLOWS: 20
+      # Extended timeouts
+      ACTIVITY_TIMEOUT_MINUTES: 45
+      LONG_ACTIVITY_TIMEOUT_MINUTES: 120
+      HEARTBEAT_TIMEOUT_MINUTES: 20
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    # Add labels for monitoring
+    labels:
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=9090"
+      - "service.type=enterprise-worker"
+
+  # Add a second worker for high availability (optional)
+  temporal-worker-secondary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-temporal-worker-secondary
+    env_file:
+      - .env
+    environment:
+      SERVICE_NAME: temporal-worker
+      ENTERPRISE_MODE: "true"
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_PORT: 7233
+      TEMPORAL_SERVER: temporal:7233
+      DATABASE_URL: postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: qlp_user
+      POSTGRES_PASSWORD: qlp_password
+      POSTGRES_DB: qlp_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      AGENT_FACTORY_URL: http://agent-factory:8001
+      VALIDATION_MESH_URL: http://validation-mesh:8002
+      VECTOR_MEMORY_URL: http://vector-memory:8003
+      SANDBOX_SERVICE_URL: http://execution-sandbox:8004
+      # Worker instance ID for distributed processing
+      WORKER_INSTANCE_ID: "worker-2"
+    depends_on:
+      temporal:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./src:/app/src:ro
+    networks:
+      - qlp-network
+    user: root
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+  # Enhanced monitoring for enterprise
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: qlp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - qlp-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: qlp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=qlp-admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - qlp-network
+
+volumes:
+  prometheus_data:
+  grafana_data:

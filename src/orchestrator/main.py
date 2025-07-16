@@ -86,6 +86,15 @@ async def startup_event():
 # Setup production middleware (includes CORS, security headers, monitoring, etc.)
 setup_middleware(app)
 
+# Add deprecation middleware for v1 endpoints
+from src.orchestrator.deprecation_middleware import deprecation_middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=deprecation_middleware)
+
+# Include unified v2 endpoints
+from src.orchestrator.unified_endpoints import router as unified_router
+app.include_router(unified_router)
+
 # Include API v2 routes with production features
 include_v2_router(app)
 
@@ -97,6 +106,10 @@ def custom_openapi_wrapper():
     return custom_openapi(app)
 
 app.openapi = custom_openapi_wrapper
+
+# Apply additional OpenAPI customization for deprecated endpoints
+from src.orchestrator.openapi_customization import apply_openapi_customization
+apply_openapi_customization(app)
 
 # Include AITL routes - commented out due to import issues
 # include_aitl_routes(app)

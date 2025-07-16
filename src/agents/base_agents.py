@@ -31,8 +31,34 @@ from src.common.error_handling import (
 from src.memory.client import VectorMemoryClient
 from src.sandbox.client import SandboxServiceClient
 from src.agents.azure_llm_client import llm_client, get_model_for_tier, LLMProvider
+from src.agents.language_utils import (
+    LanguageDetector,
+    get_language_example,
+    ensure_language_in_output,
+    extract_code_from_output
+)
 
 logger = structlog.get_logger()
+
+# Security prompt template
+SECURITY_REQUIREMENTS = """
+Security Requirements:
+- NEVER hardcode secrets, passwords, API keys, or tokens in the code
+- Use environment variables for ALL sensitive configuration (e.g., os.getenv('API_KEY'))
+- Implement proper input validation and sanitization for all user inputs
+- Use parameterized queries for ALL database operations to prevent SQL injection
+- Hash passwords with bcrypt using a minimum of 12 rounds
+- Implement rate limiting on all public endpoints
+- Use secure session management with proper expiration
+- Enable CORS with specific allowed origins only (never use '*' in production)
+- Add comprehensive error handling without exposing internal system details
+- Use HTTPS/TLS for all external communications
+- Validate and sanitize file uploads if applicable
+- Implement proper authentication and authorization checks
+- Use constant-time comparison for sensitive data (e.g., secrets.compare_digest())
+- Escape output properly to prevent XSS attacks
+- Set secure headers (CSP, X-Frame-Options, etc.)
+"""
 
 # Initialize clients
 # Keep legacy clients for backward compatibility
@@ -55,62 +81,8 @@ class Agent:
         raise NotImplementedError
     
     def _detect_language_from_task(self, description: str) -> str:
-        """Detect programming language from task description"""
-        desc_lower = description.lower()
-        
-        # Language detection patterns (order matters - more specific first)
-        language_patterns = {
-            "javascript": ["javascript", "js", "node.js", "nodejs", "express", "react", "vue", "angular", "npm"],
-            "typescript": ["typescript", "ts", "angular", "nest.js", "nestjs"],
-            "python": ["python", "flask", "django", "fastapi", "pandas", "numpy", "tensorflow", "pytorch"],
-            "java": ["java", "spring", "springboot", "maven", "gradle", "hibernate"],
-            "go": ["go", "golang", "gin", "gorilla", "chi"],
-            "rust": ["rust", "cargo", "tokio", "serde", "actix"],
-            "cpp": ["c++", "cpp", "cmake", "boost"],
-            "c": ["c language", " c "],
-            "csharp": ["c#", "csharp", ".net", "dotnet", "asp.net"],
-            "php": ["php", "laravel", "symfony", "composer"],
-            "ruby": ["ruby", "rails", "gem"],
-            "swift": ["swift", "ios", "xcode"],
-            "kotlin": ["kotlin", "android"],
-            "scala": ["scala", "akka", "play"],
-            "r": ["r language", "rstudio", "ggplot"],
-            "sql": ["sql", "mysql", "postgresql", "sqlite", "database query"],
-            "shell": ["bash", "shell script", "zsh", "sh"]
-        }
-        
-        # Check for explicit language mentions
-        for language, patterns in language_patterns.items():
-            if any(pattern in desc_lower for pattern in patterns):
-                return language
-        
-        # Framework-specific detection
-        if any(framework in desc_lower for framework in ["express", "koa", "fastify"]):
-            return "javascript"
-        elif any(framework in desc_lower for framework in ["react", "vue", "angular"]):
-            return "javascript"
-        elif any(framework in desc_lower for framework in ["spring", "springboot"]):
-            return "java"
-        elif any(framework in desc_lower for framework in ["flask", "django", "fastapi"]):
-            return "python"
-        elif any(framework in desc_lower for framework in ["gin", "echo", "fiber"]):
-            return "go"
-        elif any(framework in desc_lower for framework in ["actix", "warp", "rocket"]):
-            return "rust"
-        
-        # API patterns
-        if any(api in desc_lower for api in ["rest api", "api", "endpoint"]):
-            if any(keyword in desc_lower for keyword in ["node", "express", "js"]):
-                return "javascript"
-            elif any(keyword in desc_lower for keyword in ["python", "flask", "django"]):
-                return "python"
-            elif any(keyword in desc_lower for keyword in ["java", "spring"]):
-                return "java"
-            elif any(keyword in desc_lower for keyword in ["go", "golang"]):
-                return "go"
-        
-        # If no clear language detected from task, we'll use LLM detection on the code
-        return None  # Let LLM detect from actual code
+        """Detect programming language from task description - delegated to LanguageDetector"""
+        return LanguageDetector.detect_language(description=description)
     
     async def _detect_language_from_code_llm(self, code: str) -> str:
         """Use pattern-based detection to intelligently detect programming language from code"""
@@ -198,6 +170,31 @@ class Agent:
         
         # As last resort, return most common language for enterprise
         return "python"  # Most common in data science/ML context
+    
+    async def _clean_llm_response(self, response: str, expected_language: str = None) -> str:
+        """Clean LLM response to extract pure code"""
+        # Remove JSON wrapping if present
+        if response.strip().startswith('```json') and response.strip().endswith('```'):
+            # Extract content between backticks
+            response = response.strip()[7:-3].strip()
+            try:
+                # Parse JSON and extract code field
+                data = json.loads(response)
+                if isinstance(data, dict) and 'code' in data:
+                    response = data['code']
+            except:
+                pass
+        
+        # Remove language-specific code blocks
+        if expected_language and response.strip().startswith(f'```{expected_language}'):
+            response = response.strip()[len(f'```{expected_language}'):-3].strip()
+        elif response.strip().startswith('```'):
+            # Find the end of the first line to skip language identifier
+            lines = response.strip().split('\n')
+            if len(lines) > 2 and lines[0].startswith('```') and lines[-1] == '```':
+                response = '\n'.join(lines[1:-1])
+        
+        return response
 
 
 class T0Agent(Agent):
@@ -231,7 +228,7 @@ class T0Agent(Agent):
                     provider=provider,
                     temperature=0.3,
                     max_tokens=2000,
-                    timeout=30.0,
+                    timeout=120.0,  # Increased from 30s to 120s for complex TDD tasks
                     # Add cost tracking context
                     workflow_id=context.get("request_id"),
                     tenant_id=context.get("tenant_id"),
@@ -263,6 +260,16 @@ class T0Agent(Agent):
             
             output = response["content"]
             
+            # Use LanguageDetector for comprehensive language detection
+            language = LanguageDetector.detect_language(
+                description=task.description,
+                metadata=getattr(task, 'metadata', None),
+                context=context
+            )
+            
+            # Clean the LLM response
+            output = await self._clean_llm_response(output, language)
+            
             execution_time = (datetime.utcnow() - start_time).total_seconds()
             
             logger.info(f"T0 Agent completed task", 
@@ -271,39 +278,17 @@ class T0Agent(Agent):
                        model=model,
                        provider=provider.value)
             
-            # Get language from task metadata/context first, fallback to detection
-            language = None
-            
-            # Check task metadata for language constraint
-            if hasattr(task, 'metadata') and task.metadata and 'language_constraint' in task.metadata:
-                language = task.metadata.get('language_constraint')
-                logger.info(f"Using language from task metadata: {language}")
-            
-            # Check task meta for preferred_language
-            elif hasattr(task, 'meta') and task.meta and 'preferred_language' in task.meta:
-                language = task.meta.get('preferred_language')
-                logger.info(f"Using language from task meta: {language}")
-            
-            # Check context for required_language
-            elif 'required_language' in context:
-                language = context.get('required_language')
-                logger.info(f"Using language from context: {language}")
-            
-            # Check context for preferred_language
-            elif 'preferred_language' in context:
-                language = context.get('preferred_language')
-                logger.info(f"Using preferred language from context: {language}")
-            
-            # Fallback to detection if no explicit language
-            if not language:
-                language = self._detect_language_from_task(task.description)
-                logger.info(f"No explicit language found, detected: {language}")
+            # Use language_utils to extract code properly
+            code, detected_lang = extract_code_from_output(output, language)
+            if detected_lang != language:
+                logger.info(f"Language mismatch: expected {language}, detected {detected_lang}")
+                language = detected_lang
             
             return TaskResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED,
                 output_type="code",
-                output={"content": output, "language": language},
+                output={"code": code, "content": output, "language": language},
                 execution_time=execution_time,
                 agent_tier_used=self.tier,
                 confidence_score=0.7,  # T0 agents have lower confidence
@@ -341,26 +326,12 @@ class T0Agent(Agent):
     
     def _build_prompt(self, task: Task, context: Dict[str, Any]) -> str:
         """Build a simple prompt for T0 tasks"""
-        # Get language from task metadata/context first, fallback to detection
-        language = None
-        
-        # Check task metadata for language constraint
-        if hasattr(task, 'metadata') and task.metadata and 'language_constraint' in task.metadata:
-            language = task.metadata.get('language_constraint')
-        
-        # Check context for required_language
-        elif 'required_language' in context:
-            language = context.get('required_language')
-        
-        # Check context for preferred_language
-        elif 'preferred_language' in context:
-            language = context.get('preferred_language')
-        
-        # Fallback to detection if no explicit language
-        if not language:
-            language = self._detect_language_from_task(task.description)
-        
-        detected_language = language
+        # Use LanguageDetector for comprehensive detection
+        detected_language = LanguageDetector.detect_language(
+            description=task.description,
+            metadata=getattr(task, 'metadata', None),
+            context=context
+        )
         
         prompt = f"Task: {task.description}\n\n"
         
@@ -369,6 +340,12 @@ class T0Agent(Agent):
             for key, value in context.items():
                 prompt += f"- {key}: {value}\n"
             prompt += "\n"
+        
+        # Add security requirements for relevant tasks
+        include_security = any(keyword in task.description.lower() for keyword in [
+            "api", "authentication", "auth", "login", "password", "user", "secure",
+            "database", "sql", "web", "endpoint", "service", "server", "backend"
+        ])
         
         prompt += f"""LANGUAGE DETECTION: Based on the task description, the required language is: {detected_language}
 
@@ -402,7 +379,13 @@ IMPORTANT:
 3. Do not wrap the code in ```{detected_language} or ``` blocks
 4. Generate complete, executable {detected_language} code
 
-Generate the complete, executable {detected_language} code now:"""
+"""
+        
+        # Add security requirements if applicable
+        if include_security:
+            prompt += f"\n{SECURITY_REQUIREMENTS}\n"
+        
+        prompt += f"Generate the complete, executable {detected_language} code now:"""
         
         return prompt
 
@@ -445,7 +428,7 @@ class T1Agent(Agent):
                 provider=provider,
                 temperature=0.3,
                 max_tokens=4000,
-                timeout=30.0,
+                timeout=120.0,  # Increased from 30s to 120s for complex TDD tasks
                 # Add cost tracking context
                 workflow_id=context.get("request_id"),
                 tenant_id=context.get("tenant_id"),
@@ -459,7 +442,7 @@ class T1Agent(Agent):
             
             output = response["content"]
             
-            # Parse structured output
+            # Parse structured output (no need to clean first since _parse_output handles it)
             parsed_output = self._parse_output(output)
             
             # If we generated code, optionally test it in sandbox
@@ -523,11 +506,24 @@ class T1Agent(Agent):
             if isinstance(parsed_output["content"], dict) and "language" not in parsed_output["content"]:
                 parsed_output["content"]["language"] = language
             
+            # Ensure output has 'code' at the top level for validation
+            output_data = parsed_output["content"]
+            if isinstance(output_data, dict) and "code" not in output_data:
+                # If code is nested or missing, try to extract it
+                output_data["code"] = output_data.get("content", str(output_data))
+            elif not isinstance(output_data, dict):
+                # If output is not a dict, wrap it
+                output_data = {"code": str(output_data), "language": language}
+            
+            # Ensure language is in output
+            if isinstance(output_data, dict) and "language" not in output_data:
+                output_data["language"] = language
+            
             return TaskResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED,
                 output_type=parsed_output["type"],
-                output=parsed_output["content"],
+                output=output_data,
                 execution_time=execution_time,
                 agent_tier_used=self.tier,
                 confidence_score=0.85,
@@ -592,6 +588,13 @@ class T1Agent(Agent):
         # Get language-specific example
         example_code, example_tests, example_deps = self._get_language_example(detected_language)
         
+        # Add security requirements for relevant tasks
+        include_security = any(keyword in task.description.lower() for keyword in [
+            "api", "authentication", "auth", "login", "password", "user", "secure",
+            "database", "sql", "web", "endpoint", "service", "server", "backend",
+            "microservice", "rest", "graphql", "jwt", "oauth"
+        ])
+        
         prompt += f"""
 LANGUAGE DETECTION: Based on the task description, the required language is: {detected_language}
 
@@ -612,7 +615,13 @@ Generate a complete solution including:
 2. Error handling and validation in {detected_language}
 3. Brief documentation
 4. All necessary {detected_language} imports and dependencies
-
+"""
+        
+        # Add security requirements if applicable
+        if include_security:
+            prompt += f"\n{SECURITY_REQUIREMENTS}\n"
+        
+        prompt += f"""
 Format your response as JSON:
 {{
     "code": "complete executable {detected_language} code with imports, classes, functions",
@@ -621,7 +630,7 @@ Format your response as JSON:
     "dependencies": ["list", "of", "required", "{detected_language}", "packages"]
 }}
 
-EXAMPLE OF GOOD RESPONSE FOR {detected_language.upper()}:
+EXAMPLE OF GOOD RESPONSE FOR {detected_language.upper() if detected_language else 'PYTHON'}:
 {{
     "code": "{example_code}",
     "tests": "{example_tests}",
@@ -662,8 +671,38 @@ EXAMPLE OF GOOD RESPONSE FOR {detected_language.upper()}:
     def _parse_output(self, output: str) -> Dict[str, Any]:
         """Parse structured output from LLM"""
         try:
-            # Try to parse as JSON first
-            parsed = json.loads(output)
+            # Clean the output first - remove markdown code blocks if present
+            cleaned_output = output.strip()
+            if cleaned_output.startswith('```json') and cleaned_output.endswith('```'):
+                cleaned_output = cleaned_output[7:-3].strip()
+            elif cleaned_output.startswith('```') and cleaned_output.endswith('```'):
+                # Find the first newline after ``` to skip language identifier
+                first_newline = cleaned_output.find('\n')
+                if first_newline > 0:
+                    cleaned_output = cleaned_output[first_newline+1:-3].strip()
+            
+            # Try to parse as JSON
+            parsed = json.loads(cleaned_output)
+            
+            # Ensure all expected fields are present
+            if not isinstance(parsed, dict):
+                raise ValueError("Response is not a JSON object")
+            
+            # If 'code' field contains stringified JSON, parse it
+            if 'code' in parsed and isinstance(parsed['code'], str):
+                if parsed['code'].strip().startswith('{') and '"code"' in parsed['code']:
+                    try:
+                        # Attempt to parse nested JSON
+                        nested_data = json.loads(parsed['code'])
+                        if isinstance(nested_data, dict) and 'code' in nested_data:
+                            parsed['code'] = nested_data['code']
+                            # Merge other fields if present
+                            for key in ['tests', 'documentation', 'dependencies']:
+                                if key in nested_data and key not in parsed:
+                                    parsed[key] = nested_data[key]
+                    except:
+                        pass  # Keep original if parsing fails
+            
             return {
                 "type": "code",
                 "content": parsed
@@ -727,33 +766,13 @@ class T2Agent(Agent):
         start_time = datetime.utcnow()
         max_iterations = 3
         
-        # Get language from task metadata/context first, fallback to detection
-        language = None
-        
-        # Check task metadata for language constraint
-        if hasattr(task, 'metadata') and task.metadata and 'language_constraint' in task.metadata:
-            language = task.metadata.get('language_constraint')
-            logger.info(f"T2: Using language from task metadata: {language}")
-        
-        # Check task meta for preferred_language
-        elif hasattr(task, 'meta') and task.meta and 'preferred_language' in task.meta:
-            language = task.meta.get('preferred_language')
-            logger.info(f"T2: Using language from task meta: {language}")
-        
-        # Check context for required_language
-        elif 'required_language' in context:
-            language = context.get('required_language')
-            logger.info(f"T2: Using language from context: {language}")
-        
-        # Check context for preferred_language
-        elif 'preferred_language' in context:
-            language = context.get('preferred_language')
-            logger.info(f"T2: Using preferred language from context: {language}")
-        
-        # Fallback to detection if no explicit language
-        if not language:
-            language = self._detect_language_from_task(task.description)
-            logger.info(f"T2: No explicit language found, detected: {language}")
+        # Use robust language detection
+        language = LanguageDetector.detect_language(
+            description=task.description,
+            metadata=task.metadata if hasattr(task, 'metadata') else None,
+            context=context
+        )
+        logger.info(f"T2: Detected language: {language}")
         
         try:
             for iteration in range(max_iterations):
@@ -819,18 +838,21 @@ class T2Agent(Agent):
     
     async def _generate_solution(self, task: Task, context: Dict[str, Any], iteration: int, language: str) -> Dict[str, Any]:
         """Generate a solution with reasoning"""
+        # Ensure language is safe
+        safe_language = LanguageDetector.get_language_safe(language)
+        
         system_prompt = f"""You are an expert software architect. Think step-by-step:
 1. Understand the requirements
 2. Design the solution architecture
-3. Implement with best practices in {language.upper()} language
+3. Implement with best practices in {safe_language.upper()} language
 4. Consider edge cases and error handling
 5. Validate your approach
 
-CRITICAL: Generate code in {language.upper()} language only. Do not use any other language.
+CRITICAL: Generate code in {safe_language.upper()} language only. Do not use any other language.
 If this is a retry, use the validation feedback to improve."""
         
         user_prompt = f"Task: {task.description}\n\n"
-        user_prompt += f"REQUIRED LANGUAGE: {language}\n\n"
+        user_prompt += f"REQUIRED LANGUAGE: {safe_language}\n\n"
         
         if context:
             user_prompt += f"Context: {json.dumps(context, indent=2)}\n\n"
@@ -854,7 +876,7 @@ If this is a retry, use the validation feedback to improve."""
         )
         
         # Parse and structure the response with correct language
-        return self._parse_solution(response["content"], language)
+        return self._parse_solution(response["content"], safe_language)
     
     async def _validate_solution(self, solution: Dict[str, Any], task: Task) -> Dict[str, Any]:
         """Validate the generated solution"""
@@ -895,13 +917,15 @@ Respond with JSON:
     
     def _parse_solution(self, content: str, language: str) -> Dict[str, Any]:
         """Parse solution from LLM response"""
-        # Extract code blocks and structure
-        # This is simplified - real implementation would be more robust
-        return {
-            "code": content,
-            "language": language,  # Use the provided language
+        # Extract code blocks and structure with language safety
+        code, detected_language = extract_code_from_output(content, language)
+        safe_language = LanguageDetector.get_language_safe(detected_language)
+        
+        return ensure_language_in_output({
+            "code": code,
+            "language": safe_language,
             "dependencies": []
-        }
+        }, safe_language)
 
 
 class T3Agent(Agent):
@@ -919,6 +943,16 @@ class T3Agent(Agent):
         start_time = datetime.utcnow()
         
         try:
+            # Detect language and ensure it's in context for sub-agents
+            language = LanguageDetector.detect_language(
+                description=task.description,
+                metadata=task.metadata if hasattr(task, 'metadata') else None,
+                context=context
+            )
+            
+            # Ensure language is propagated to sub-agents
+            context = {**context, "required_language": language}
+            
             # Analyze task to determine agent composition
             agent_plan = await self._plan_agent_composition(task, context)
             
@@ -1007,13 +1041,48 @@ class T3Agent(Agent):
         """Synthesize results from multiple agents"""
         successful_results = [r for r in results if r.status == TaskStatus.COMPLETED]
         
+        # Extract language from results
+        language = None
+        for result in successful_results:
+            if isinstance(result.output, dict) and 'language' in result.output:
+                language = result.output['language']
+                break
+        
+        # Use robust language detection if not found
+        if not language:
+            language = LanguageDetector.detect_language(
+                description=task.description,
+                metadata=task.metadata if hasattr(task, 'metadata') else None
+            )
+        
+        # Extract code from results with proper structure handling
+        code_result = None
+        validation_result = None
+        tests_result = None
+        
+        for idx, result in enumerate(successful_results):
+            if idx == 0:  # First result is usually code
+                if isinstance(result.output, dict):
+                    code_result = result.output.get('code', result.output.get('content', ''))
+                else:
+                    code_result = str(result.output)
+            elif idx == 1:  # Second is validation
+                validation_result = result.output if isinstance(result.output, dict) else {"validation": str(result.output)}
+            elif idx == 2:  # Third is tests
+                if isinstance(result.output, dict):
+                    tests_result = result.output.get('code', result.output.get('content', ''))
+                else:
+                    tests_result = str(result.output)
+        
         return {
             "synthesized_output": {
-                "code": successful_results[0].output if successful_results else "",
-                "validation": successful_results[1].output if len(successful_results) > 1 else {},
-                "tests": successful_results[2].output if len(successful_results) > 2 else ""
+                "code": code_result or "",
+                "validation": validation_result or {},
+                "tests": tests_result or "",
+                "language": language
             },
-            "sub_agent_results": [r.dict() for r in results]
+            "sub_agent_results": [r.dict() for r in results],
+            "language": language
         }
 
 

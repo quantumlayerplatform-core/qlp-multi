@@ -40,11 +40,15 @@ fi
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Check which worker to use
-if [ "$1" == "production" ]; then
+if [ "$ENTERPRISE_MODE" == "true" ] || [ "$1" == "enterprise" ]; then
+    echo -e "${GREEN}Starting ENTERPRISE worker with advanced reliability features...${NC}"
+    echo -e "${YELLOW}Features: Circuit breakers, parallel batching, checkpointing${NC}"
+    python -m src.orchestrator.enterprise_worker
+elif [ "$1" == "production" ]; then
     echo -e "${GREEN}Starting production worker...${NC}"
     python -m src.orchestrator.worker_production
 else
-    echo -e "${GREEN}Starting standard worker...${NC}"
-    # Use the production worker by default as it has better imports
+    echo -e "${GREEN}Starting standard production worker...${NC}"
+    # Use the production worker by default
     python -m src.orchestrator.worker_production
 fi

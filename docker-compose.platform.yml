@@ -272,6 +272,16 @@ services:
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
       CLERK_JWKS_URL: ${CLERK_JWKS_URL}
+      # Enterprise mode configuration
+      ENTERPRISE_MODE: "false"
+      WORKFLOW_MAX_BATCH_SIZE: 50
+      WORKFLOW_MAX_CONCURRENT_ACTIVITIES: 100
+      WORKFLOW_MAX_CONCURRENT_WORKFLOWS: 50
+      ENABLE_DYNAMIC_SCALING: "true"
+      CIRCUIT_BREAKER_ENABLED: "true"
+      ENABLE_ADAPTIVE_TIMEOUTS: "true"
+      ENABLE_METRICS: "true"
+      ENABLE_DISTRIBUTED_TRACING: "true"
     depends_on:
       temporal:
         condition: service_healthy

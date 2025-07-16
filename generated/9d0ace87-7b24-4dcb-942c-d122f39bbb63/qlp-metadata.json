@@ -1,0 +1,20 @@
+{
+  "capsule_id": "9d0ace87-7b24-4dcb-942c-d122f39bbb63",
+  "request_id": "7341b6aa-789d-426e-9cda-f346e51f5d2c",
+  "exported_at": "2025-07-15T06:25:47.050936",
+  "export_format": "zip",
+  "metadata": {
+    "shared_context": {
+      "language": "go",
+      "created_at": "2025-07-15T06:24:36.336908",
+      "updated_at": "2025-07-15T06:24:55.573223",
+      "main_file_name": "main.go",
+      "project_structure": "flat",
+      "architecture_pattern": "monolith"
+    },
+    "agent_tiers_used": [
+      "T0"
+    ],
+    "total_execution_time": 12.234089
+  }
+}

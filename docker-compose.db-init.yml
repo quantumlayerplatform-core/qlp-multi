@@ -1,0 +1,18 @@
+# Database initialization service overlay
+services:
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qlp-db-init
+    command: python init_db_docker.py
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - qlp-network
+    profiles:
+      - init
+EOF < /dev/null

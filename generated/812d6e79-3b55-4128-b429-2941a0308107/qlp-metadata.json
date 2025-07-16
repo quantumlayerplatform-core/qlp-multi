@@ -1,0 +1,20 @@
+{
+  "capsule_id": "812d6e79-3b55-4128-b429-2941a0308107",
+  "request_id": "49df800a-fdcf-405f-b0fc-b9cd51de9dd6",
+  "exported_at": "2025-07-15T06:55:40.450875",
+  "export_format": "zip",
+  "metadata": {
+    "shared_context": {
+      "language": "python",
+      "created_at": "2025-07-15T06:54:37.869206",
+      "updated_at": "2025-07-15T06:54:52.316984",
+      "main_file_name": "main.py",
+      "project_structure": "flat",
+      "architecture_pattern": "monolith"
+    },
+    "agent_tiers_used": [
+      "T0"
+    ],
+    "total_execution_time": 11.834143
+  }
+}

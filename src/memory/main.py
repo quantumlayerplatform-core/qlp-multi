@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 import json
 import asyncio
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,12 +89,61 @@ class VectorMemoryService:
         self.collections = COLLECTIONS
         
     async def initialize_collections(self):
-        """Create Qdrant collections if they don't exist"""
+        """Create Qdrant collections if they don't exist with optimized payload indexing"""
+        from qdrant_client.models import PayloadSchemaType
+        
+        # Define payload indexes for each collection type
+        collection_indexes = {
+            "code_patterns": [
+                ("language", PayloadSchemaType.KEYWORD),
+                ("capsule_id", PayloadSchemaType.KEYWORD),
+                ("request_id", PayloadSchemaType.KEYWORD),
+                ("validation_score", PayloadSchemaType.FLOAT),
+                ("created_at", PayloadSchemaType.DATETIME),
+                ("usage_count", PayloadSchemaType.INTEGER),
+                ("success_rate", PayloadSchemaType.FLOAT)
+            ],
+            "agent_decisions": [
+                ("task_type", PayloadSchemaType.KEYWORD),
+                ("complexity", PayloadSchemaType.KEYWORD),
+                ("agent_tier", PayloadSchemaType.KEYWORD),
+                ("tier", PayloadSchemaType.KEYWORD),
+                ("success_rate", PayloadSchemaType.FLOAT),
+                ("execution_time", PayloadSchemaType.FLOAT),
+                ("created_at", PayloadSchemaType.DATETIME)
+            ],
+            "error_patterns": [
+                ("error_type", PayloadSchemaType.KEYWORD),
+                ("task_id", PayloadSchemaType.KEYWORD),
+                ("agent_id", PayloadSchemaType.KEYWORD),
+                ("created_at", PayloadSchemaType.DATETIME),
+                ("occurrence_count", PayloadSchemaType.INTEGER)
+            ],
+            "requirements": [
+                ("tenant_id", PayloadSchemaType.KEYWORD),
+                ("user_id", PayloadSchemaType.KEYWORD),
+                ("created_at", PayloadSchemaType.DATETIME),
+                ("complexity", PayloadSchemaType.KEYWORD),
+                ("status", PayloadSchemaType.KEYWORD)
+            ],
+            "executions": [
+                ("request_id", PayloadSchemaType.KEYWORD),
+                ("tenant_id", PayloadSchemaType.KEYWORD),
+                ("user_id", PayloadSchemaType.KEYWORD),
+                ("created_at", PayloadSchemaType.DATETIME),
+                ("success_rate", PayloadSchemaType.FLOAT),
+                ("execution_time", PayloadSchemaType.FLOAT),
+                ("capsule_id", PayloadSchemaType.KEYWORD)
+            ]
+        }
+        
         for name, collection_name in self.collections.items():
             try:
                 # Check if collection exists
                 collections = self.qdrant.get_collections()
-                if not any(c.name == collection_name for c in collections.collections):
+                collection_exists = any(c.name == collection_name for c in collections.collections)
+                
+                if not collection_exists:
                     # Create collection
                     self.qdrant.create_collection(
                         collection_name=collection_name,
@@ -106,6 +155,21 @@ class VectorMemoryService:
                     logger.info(f"Created collection: {collection_name}")
                 else:
                     logger.info(f"Collection already exists: {collection_name}")
+                
+                # Create or update payload indexes
+                if name in collection_indexes:
+                    for field_name, field_type in collection_indexes[name]:
+                        try:
+                            self.qdrant.create_payload_index(
+                                collection_name=collection_name,
+                                field_name=field_name,
+                                field_schema=field_type
+                            )
+                            logger.info(f"Created/updated index for {field_name} in {collection_name}")
+                        except Exception as idx_error:
+                            # Index might already exist, log but continue
+                            logger.debug(f"Index {field_name} may already exist: {idx_error}")
+                            
             except Exception as e:
                 logger.error(f"Error initializing collection {collection_name}: {e}")
                 raise
@@ -128,16 +192,32 @@ class VectorMemoryService:
             logger.error(f"Error getting embedding: {e}")
             raise
     
-    async def search_similar_requests(self, description: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for similar past requests"""
+    async def search_similar_requests(self, description: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Search for similar past requests with optional filtering"""
         try:
             # Get embedding for the query
             query_vector = await self.get_embedding(description)
             
-            # Search in executions collection
+            # Build filter conditions if provided
+            filter_conditions = None
+            if filters:
+                must_conditions = []
+                for key, value in filters.items():
+                    if value is not None:
+                        must_conditions.append(
+                            FieldCondition(
+                                key=key,
+                                match=MatchValue(value=value)
+                            )
+                        )
+                if must_conditions:
+                    filter_conditions = Filter(must=must_conditions)
+            
+            # Search in executions collection with filters
             search_result = self.qdrant.search(
                 collection_name=self.collections["executions"],
                 query_vector=query_vector,
+                query_filter=filter_conditions,
                 limit=limit,
                 with_payload=True,
                 score_threshold=0.7  # Only return good matches
@@ -152,7 +232,10 @@ class VectorMemoryService:
                     "tasks": payload.get("tasks", []),
                     "success_rate": payload.get("success_rate", 0.0),
                     "execution_time": payload.get("execution_time", 0),
-                    "score": point.score
+                    "score": point.score,
+                    "tenant_id": payload.get("tenant_id"),
+                    "user_id": payload.get("user_id"),
+                    "created_at": payload.get("created_at")
                 })
             
             return results
@@ -161,14 +244,34 @@ class VectorMemoryService:
             logger.error(f"Error searching similar requests: {e}")
             return []
     
-    async def search_code_patterns(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for similar code patterns"""
+    async def search_code_patterns(self, query: str, limit: int = 5, language: Optional[str] = None, min_success_rate: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Search for similar code patterns with language and quality filtering"""
         try:
             query_vector = await self.get_embedding(query)
+            
+            # Build filter conditions
+            must_conditions = []
+            if language:
+                must_conditions.append(
+                    FieldCondition(
+                        key="language",
+                        match=MatchValue(value=language)
+                    )
+                )
+            if min_success_rate is not None:
+                must_conditions.append(
+                    FieldCondition(
+                        key="success_rate",
+                        range={"gte": min_success_rate}
+                    )
+                )
+            
+            filter_conditions = Filter(must=must_conditions) if must_conditions else None
             
             search_result = self.qdrant.search(
                 collection_name=self.collections["code_patterns"],
                 query_vector=query_vector,
+                query_filter=filter_conditions,
                 limit=limit,
                 with_payload=True,
                 score_threshold=0.75
@@ -184,7 +287,9 @@ class VectorMemoryService:
                     "language": payload.get("language", "python"),
                     "usage_count": payload.get("usage_count", 0),
                     "success_rate": payload.get("success_rate", 0.0),
-                    "score": point.score
+                    "score": point.score,
+                    "capsule_id": payload.get("capsule_id"),
+                    "created_at": payload.get("created_at")
                 })
             
             return results
@@ -433,6 +538,215 @@ Stack Trace: {error_context.get('stack_trace', '')[:500]}
                 return lang
         
         return 'unknown'
+    
+    async def optimize_collections(self):
+        """Optimize existing collections by updating configuration and indexes"""
+        from qdrant_client.models import OptimizersConfig, PayloadSchemaType
+        
+        optimizers_config = OptimizersConfig(
+            indexing_threshold=1000,  # Start indexing after 1000 vectors
+            memmap_threshold=50000,   # Use memory mapping for large collections
+            default_segment_number=4,  # Parallel segments for better performance
+            max_segment_size=200000,  # Maximum vectors per segment
+            flush_interval_sec=5      # Flush to disk every 5 seconds
+        )
+        
+        for name, collection_name in self.collections.items():
+            try:
+                # Update collection configuration
+                self.qdrant.update_collection(
+                    collection_name=collection_name,
+                    optimizer_config=optimizers_config
+                )
+                logger.info(f"Updated optimizer config for {collection_name}")
+                
+                # Force re-indexing if needed
+                collection_info = self.qdrant.get_collection(collection_name)
+                if collection_info.points_count > 1000:
+                    # Recreate indexes to ensure optimization
+                    logger.info(f"Re-indexing {collection_name} with {collection_info.points_count} points")
+                    
+            except Exception as e:
+                logger.error(f"Error optimizing collection {collection_name}: {e}")
+    
+    async def batch_store_code_patterns(self, patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Batch store multiple code patterns for efficiency"""
+        try:
+            points = []
+            successful_ids = []
+            failed_patterns = []
+            
+            # Process patterns in parallel for embedding generation
+            import asyncio
+            
+            async def process_pattern(pattern):
+                try:
+                    # Extract data
+                    code = pattern.get("code", "")
+                    description = pattern.get("description", "")
+                    language = pattern.get("language", "python")
+                    metadata = pattern.get("metadata", {})
+                    
+                    # Generate embedding
+                    embedding_text = f"{description}\n\n{code}"
+                    embedding = await self.get_embedding(embedding_text)
+                    
+                    # Create point
+                    point_id = str(uuid4())
+                    point = PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload={
+                            "description": description,
+                            "code": code,
+                            "language": language,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "usage_count": 0,
+                            "success_rate": metadata.get("success_rate", 0.5),
+                            **metadata
+                        }
+                    )
+                    
+                    return point_id, point, None
+                except Exception as e:
+                    return None, None, {"pattern": pattern, "error": str(e)}
+            
+            # Process all patterns concurrently
+            tasks = [process_pattern(p) for p in patterns]
+            results = await asyncio.gather(*tasks)
+            
+            # Collect successful points and failures
+            for point_id, point, error in results:
+                if point:
+                    points.append(point)
+                    successful_ids.append(point_id)
+                else:
+                    failed_patterns.append(error)
+            
+            # Batch insert successful points
+            if points:
+                self.qdrant.upsert(
+                    collection_name=self.collections["code_patterns"],
+                    points=points,
+                    wait=True  # Wait for operation to complete
+                )
+                logger.info(f"Batch stored {len(points)} code patterns")
+            
+            return {
+                "success": len(successful_ids),
+                "failed": len(failed_patterns),
+                "ids": successful_ids,
+                "errors": failed_patterns
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch store: {e}")
+            raise
+    
+    async def batch_search_patterns(self, queries: List[str], limit: int = 5) -> List[List[Dict[str, Any]]]:
+        """Batch search for multiple queries efficiently"""
+        try:
+            # Generate embeddings for all queries in parallel
+            tasks = [self.get_embedding(q) for q in queries]
+            query_vectors = await asyncio.gather(*tasks)
+            
+            # Perform batch search
+            from qdrant_client.models import SearchRequest
+            
+            search_requests = [
+                SearchRequest(
+                    vector=vector,
+                    limit=limit,
+                    with_payload=True,
+                    score_threshold=0.7
+                )
+                for vector in query_vectors
+            ]
+            
+            # Execute batch search
+            batch_results = self.qdrant.search_batch(
+                collection_name=self.collections["code_patterns"],
+                requests=search_requests
+            )
+            
+            # Process results
+            all_results = []
+            for query_results in batch_results:
+                results = []
+                for point in query_results:
+                    payload = point.payload
+                    results.append({
+                        "id": point.id,
+                        "description": payload.get("description", ""),
+                        "code": payload.get("code", ""),
+                        "language": payload.get("language", "python"),
+                        "score": point.score
+                    })
+                all_results.append(results)
+            
+            return all_results
+            
+        except Exception as e:
+            logger.error(f"Error in batch search: {e}")
+            return [[] for _ in queries]  # Return empty results for each query
+    
+    async def batch_update_metrics(self, updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Batch update metrics for multiple patterns"""
+        try:
+            success_count = 0
+            failed_count = 0
+            
+            # Group updates by operation type
+            from qdrant_client.models import UpdateOperation, SetPayload
+            
+            for update in updates:
+                try:
+                    point_id = update.get("id")
+                    if not point_id:
+                        failed_count += 1
+                        continue
+                    
+                    # Prepare payload updates
+                    payload_updates = {}
+                    
+                    if "increment_usage" in update:
+                        # For incrementing usage, we need to fetch current value
+                        points = self.qdrant.retrieve(
+                            collection_name=self.collections["code_patterns"],
+                            ids=[point_id],
+                            with_payload=True
+                        )
+                        if points:
+                            current_usage = points[0].payload.get("usage_count", 0)
+                            payload_updates["usage_count"] = current_usage + 1
+                    
+                    if "success_rate" in update:
+                        payload_updates["success_rate"] = update["success_rate"]
+                    
+                    if "last_used" in update:
+                        payload_updates["last_used"] = update["last_used"]
+                    
+                    # Apply updates
+                    if payload_updates:
+                        self.qdrant.set_payload(
+                            collection_name=self.collections["code_patterns"],
+                            payload=payload_updates,
+                            points=[point_id]
+                        )
+                        success_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to update point {point_id}: {e}")
+                    failed_count += 1
+            
+            return {
+                "success": success_count,
+                "failed": failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch update metrics: {e}")
+            raise
 
 
 # Initialize service
@@ -448,21 +762,24 @@ async def startup_event():
 
 @app.post("/search/requests")
 async def search_requests(query: Dict[str, Any]):
-    """Search for similar past requests"""
+    """Search for similar past requests with optional filtering"""
     description = query.get("description", "")
     limit = query.get("limit", 5)
+    filters = query.get("filters", {})
     
-    results = await memory_service.search_similar_requests(description, limit)
+    results = await memory_service.search_similar_requests(description, limit, filters)
     return results
 
 
 @app.post("/search/code")
 async def search_code(query: Dict[str, Any]):
-    """Search for similar code patterns"""
+    """Search for similar code patterns with filtering"""
     search_query = query.get("query", "")
     limit = query.get("limit", 5)
+    language = query.get("language")
+    min_success_rate = query.get("min_success_rate")
     
-    results = await memory_service.search_code_patterns(search_query, limit)
+    results = await memory_service.search_code_patterns(search_query, limit, language, min_success_rate)
     return results
 
 
@@ -750,6 +1067,143 @@ async def store_capsule_pattern(data: Dict[str, Any]):
 async def store_execution(data: Dict[str, Any]):
     """Store task execution for learning"""
     return await store_execution_pattern(data)
+
+
+@app.post("/optimize")
+async def optimize_collections():
+    """Optimize all collections for better performance"""
+    try:
+        await memory_service.optimize_collections()
+        return {"status": "success", "message": "Collections optimized"}
+    except Exception as e:
+        logger.error(f"Error optimizing collections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/batch/store/patterns")
+async def batch_store_patterns(data: Dict[str, Any]):
+    """Batch store multiple code patterns for efficiency"""
+    try:
+        patterns = data.get("patterns", [])
+        if not patterns:
+            raise HTTPException(status_code=400, detail="No patterns provided")
+        
+        if len(patterns) > 1000:
+            raise HTTPException(status_code=400, detail="Maximum 1000 patterns per batch")
+        
+        result = await memory_service.batch_store_code_patterns(patterns)
+        return {
+            "status": "success",
+            "summary": {
+                "total": len(patterns),
+                "successful": result["success"],
+                "failed": result["failed"]
+            },
+            "ids": result["ids"],
+            "errors": result["errors"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch store: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/batch/search/patterns")
+async def batch_search_patterns(data: Dict[str, Any]):
+    """Batch search for multiple queries"""
+    try:
+        queries = data.get("queries", [])
+        limit = data.get("limit", 5)
+        
+        if not queries:
+            raise HTTPException(status_code=400, detail="No queries provided")
+        
+        if len(queries) > 100:
+            raise HTTPException(status_code=400, detail="Maximum 100 queries per batch")
+        
+        results = await memory_service.batch_search_patterns(queries, limit)
+        
+        # Format response
+        response = []
+        for i, query in enumerate(queries):
+            response.append({
+                "query": query,
+                "results": results[i] if i < len(results) else []
+            })
+        
+        return {
+            "status": "success",
+            "batch_results": response
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/batch/update/metrics")
+async def batch_update_metrics(data: Dict[str, Any]):
+    """Batch update metrics for multiple patterns"""
+    try:
+        updates = data.get("updates", [])
+        
+        if not updates:
+            raise HTTPException(status_code=400, detail="No updates provided")
+        
+        if len(updates) > 500:
+            raise HTTPException(status_code=400, detail="Maximum 500 updates per batch")
+        
+        result = await memory_service.batch_update_metrics(updates)
+        
+        return {
+            "status": "success",
+            "summary": {
+                "total": len(updates),
+                "successful": result["success"],
+                "failed": result["failed"]
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/indexes")
+async def get_indexes():
+    """Get information about collection indexes"""
+    try:
+        index_info = {}
+        
+        for name, collection_name in COLLECTIONS.items():
+            try:
+                # Get collection info
+                collection = memory_service.qdrant.get_collection(collection_name)
+                
+                # Note: Qdrant doesn't expose index details via API
+                # This is a placeholder for index information
+                index_info[name] = {
+                    "collection": collection_name,
+                    "points_count": collection.points_count,
+                    "vectors_count": collection.vectors_count,
+                    "status": "indexed" if collection.points_count > 0 else "empty",
+                    "optimizer_status": collection.status,
+                    "segments_count": collection.segments_count if hasattr(collection, 'segments_count') else "unknown"
+                }
+            except Exception as e:
+                index_info[name] = {"error": str(e)}
+        
+        return {"status": "success", "indexes": index_info}
+        
+    except Exception as e:
+        logger.error(f"Error getting index info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

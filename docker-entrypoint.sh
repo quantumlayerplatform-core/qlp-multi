@@ -58,8 +58,17 @@ case "$SERVICE_NAME" in
         fi
         wait_for_service "$TEMPORAL_HOSTNAME" "$TEMPORAL_PORT_VAR" "Temporal"
         wait_for_service ${POSTGRES_HOST:-postgres} ${POSTGRES_PORT:-5432} "PostgreSQL"
-        echo "Starting Temporal worker with PostgreSQL persistence..."
-        exec python -m src.orchestrator.worker_production_db
+        wait_for_service ${REDIS_HOST:-redis} ${REDIS_PORT:-6379} "Redis"
+        
+        # Check if enterprise mode is enabled
+        if [ "$ENTERPRISE_MODE" = "true" ]; then
+            echo "Starting ENTERPRISE Temporal worker with advanced reliability features..."
+            echo "Features: Circuit breakers, parallel batching, checkpointing"
+            exec python -m src.orchestrator.enterprise_worker
+        else
+            echo "Starting Standard Temporal worker with PostgreSQL persistence..."
+            exec python -m src.orchestrator.worker_production_db
+        fi
         ;;
     marketing-worker)
         # Parse TEMPORAL_HOST to extract hostname and port

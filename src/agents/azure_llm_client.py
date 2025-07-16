@@ -26,6 +26,7 @@ from tenacity import (
 from src.common.config import settings
 from src.agents.azure_llm_optimized import optimized_azure_client
 from src.common.cost_calculator_persistent import track_llm_cost
+from src.agents.rate_limiter import global_rate_limiter, rate_limit_handler, RateLimitBackoff
 
 logger = structlog.get_logger()
 
@@ -135,12 +136,6 @@ class LLMClient:
             except Exception as e:
                 logger.warning(f"Failed to initialize AWS Bedrock client: {e}")
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((RateLimitError, APITimeoutError)),
-        before_sleep=before_sleep_log(logger, logging.INFO)
-    )
     async def _make_request_with_retry(
         self,
         client: Any,
@@ -149,23 +144,82 @@ class LLMClient:
         messages: List[Dict[str, str]],
         **kwargs
     ) -> Any:
-        """Make request with retry logic"""
-        self.metrics["retries"] += 1
+        """Make request with intelligent retry logic"""
+        backoff = RateLimitBackoff(initial_delay=2.0, max_delay=60.0)
+        max_retries = 5  # Increased from 3
         
-        if provider in [LLMProvider.OPENAI, LLMProvider.AZURE_OPENAI, LLMProvider.GROQ]:
-            return await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                **kwargs
-            )
-        elif provider == LLMProvider.ANTHROPIC:
-            return await client.messages.create(
-                model=model,
-                messages=messages,
-                **kwargs
-            )
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+        for attempt in range(max_retries):
+            try:
+                if provider in [LLMProvider.OPENAI, LLMProvider.AZURE_OPENAI, LLMProvider.GROQ]:
+                    response = await client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        **kwargs
+                    )
+                elif provider == LLMProvider.ANTHROPIC:
+                    response = await client.messages.create(
+                        model=model,
+                        messages=messages,
+                        **kwargs
+                    )
+                else:
+                    raise ValueError(f"Unknown provider: {provider}")
+                
+                # Success - reset metrics
+                return response
+                
+            except (RateLimitError, APITimeoutError) as e:
+                self.metrics["retries"] += 1
+                
+                if attempt >= max_retries - 1:
+                    # Last attempt failed
+                    logger.error(
+                        f"Max retries exceeded for {provider.value}",
+                        model=model,
+                        attempt=attempt + 1,
+                        error=str(e)
+                    )
+                    raise
+                
+                # Calculate backoff delay
+                delay = backoff.next_delay()
+                
+                # Extract retry-after header if available
+                if hasattr(e, 'response') and e.response:
+                    retry_after = e.response.headers.get('retry-after')
+                    if retry_after:
+                        try:
+                            delay = max(delay, float(retry_after))
+                        except:
+                            pass
+                
+                logger.warning(
+                    f"Rate limit hit for {provider.value}, retrying in {delay:.1f}s",
+                    model=model,
+                    attempt=attempt + 1,
+                    max_retries=max_retries
+                )
+                
+                await asyncio.sleep(delay)
+                
+                # Optionally reduce rate limits if we keep hitting them
+                if attempt >= 2:
+                    current_rpm = global_rate_limiter.provider_limits.get(provider.value, {}).get("rpm", 60)
+                    reduced_rpm = int(current_rpm * 0.8)
+                    global_rate_limiter.update_limits(provider.value, rpm=reduced_rpm)
+                    logger.info(f"Reduced {provider.value} rate limit to {reduced_rpm} RPM")
+                
+            except Exception as e:
+                # Non-retryable error
+                logger.error(
+                    f"Non-retryable error for {provider.value}",
+                    model=model,
+                    error=str(e)
+                )
+                raise
+        
+        # Should not reach here
+        raise Exception(f"Unexpected retry loop exit for {provider.value}")
     
     async def chat_completion(
         self,
@@ -174,7 +228,7 @@ class LLMClient:
         provider: Optional[LLMProvider] = None,
         temperature: float = 0.3,
         max_tokens: int = 2000,
-        timeout: float = 30.0,
+        timeout: float = 300.0,  # 5 minutes for enterprise-scale tasks
         use_optimized: bool = True,
         workflow_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -264,6 +318,19 @@ class LLMClient:
             raise ValueError(f"Provider {provider} not initialized. Check API keys.")
         
         client = self.clients[provider]
+        
+        # Estimate tokens for rate limiting (rough approximation)
+        estimated_tokens = sum(len(m.get("content", "").split()) * 1.3 for m in messages) + max_tokens
+        
+        # Wait for rate limit clearance
+        acquired = await global_rate_limiter.wait_and_acquire(
+            provider.value,
+            int(estimated_tokens),
+            max_wait=30.0
+        )
+        
+        if not acquired:
+            raise RateLimitError(f"Rate limit timeout for {provider.value}")
         
         async with self.request_semaphore:
             try:

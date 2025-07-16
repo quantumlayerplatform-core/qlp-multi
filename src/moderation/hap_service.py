@@ -34,6 +34,28 @@ class Severity(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+    
+    def __lt__(self, other):
+        if not isinstance(other, Severity):
+            return NotImplemented
+        order = [Severity.CLEAN, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        return order.index(self) < order.index(other)
+    
+    def __le__(self, other):
+        if not isinstance(other, Severity):
+            return NotImplemented
+        return self == other or self < other
+    
+    def __gt__(self, other):
+        if not isinstance(other, Severity):
+            return NotImplemented
+        order = [Severity.CLEAN, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        return order.index(self) > order.index(other)
+    
+    def __ge__(self, other):
+        if not isinstance(other, Severity):
+            return NotImplemented
+        return self == other or self > other
 
 
 class Category(str, Enum):
@@ -182,6 +204,14 @@ class HAPService:
             r'\b(database|query|table|index|schema)\b',
             r'\b(git|commit|branch|merge|pull|push)\b',
             
+            # E-commerce and business terms
+            r'\b(review|moderation|workflow|compliance|pci)\b',
+            r'\b(cart|checkout|payment|order|inventory)\b',
+            r'\b(product|catalog|category|analytics|dashboard)\b',
+            r'\b(admin|customer|user|management|interface)\b',
+            r'\b(rate.?limit|caching|monitoring|logging)\b',
+            r'\b(microservice|architecture|backend|frontend)\b',
+            
             # Code syntax patterns
             r'[a-zA-Z_]\w*\s*\(',  # Function calls
             r'{\s*["\']?\w+["\']?\s*:',  # JSON/dict syntax
@@ -303,6 +333,9 @@ class HAPService:
             'execute': {'technical': Severity.CLEAN, 'general': Severity.MEDIUM},
             'hang': {'technical': Severity.LOW, 'general': Severity.MEDIUM},
             'deadlock': {'technical': Severity.CLEAN, 'general': Severity.LOW},
+            'abuse': {'technical': Severity.CLEAN, 'general': Severity.HIGH},
+            'threat': {'technical': Severity.LOW, 'general': Severity.HIGH},
+            'harm': {'technical': Severity.LOW, 'general': Severity.HIGH},
         }
         
         # Check against patterns

@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'qlp-services'
+    static_configs:
+      - targets:
+          - 'orchestrator:8000'
+          - 'agent-factory:8001'
+          - 'validation-mesh:8002'
+          - 'vector-memory:8003'
+          - 'execution-sandbox:8004'
+        labels:
+          group: 'services'
+  
+  - job_name: 'temporal'
+    static_configs:
+      - targets:
+          - 'temporal:7233'
+        labels:
+          group: 'infrastructure'
+  
+  - job_name: 'workers'
+    static_configs:
+      - targets:
+          - 'temporal-worker:9090'
+          - 'temporal-worker-secondary:9090'
+        labels:
+          group: 'workers'
