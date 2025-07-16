@@ -5,8 +5,6 @@ builder = "dockerfile"
 
 [deploy]
 startCommand = "docker-entrypoint.sh"
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 3
 healthcheckTimeout = 10
 sleepApplication = false
 
@@ -40,4 +38,3 @@ privileged = true
 [services.temporal-worker]
 cpu = 1.0
 memory = "2Gi"
-restartPolicyType = "always"

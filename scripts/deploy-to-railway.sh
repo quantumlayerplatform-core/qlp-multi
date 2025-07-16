@@ -60,11 +60,13 @@ fi
 
 # Step 3: Add databases
 echo -e "\n${BLUE}Step 3: Add Databases${NC}"
-echo "Adding PostgreSQL..."
-railway add postgresql
-
-echo "Adding Redis..."
-railway add redis
+echo -e "${YELLOW}Please add databases manually in Railway dashboard:${NC}"
+echo "1. Go to https://railway.app/project/$PROJECT_ID"
+echo "2. Click 'New' -> 'Database' -> 'PostgreSQL'"
+echo "3. Click 'New' -> 'Database' -> 'Redis'"
+echo ""
+echo "Press enter when you've added both databases..."
+read -r
 
 # Step 4: Set up environment variables
 echo -e "\n${BLUE}Step 4: Setting up Environment Variables${NC}"
