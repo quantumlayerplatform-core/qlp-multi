@@ -228,7 +228,7 @@ class LLMClient:
         provider: Optional[LLMProvider] = None,
         temperature: float = 0.3,
         max_tokens: int = 2000,
-        timeout: float = 300.0,  # 5 minutes for enterprise-scale tasks
+        timeout: float = 600.0,  # 10 minutes for enterprise-scale tasks
         use_optimized: bool = True,
         workflow_id: Optional[str] = None,
         tenant_id: Optional[str] = None,

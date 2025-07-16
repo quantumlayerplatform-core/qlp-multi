@@ -195,7 +195,7 @@ async def execute_task_activity_enhanced(
         
         start_time = time.time()
         
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=SERVICE_CALL_TIMEOUT) as client:
             # Execute with enterprise heartbeat management
             response = await with_enterprise_heartbeat(
                 execute_agent_call(client, execution_input, settings),

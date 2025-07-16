@@ -228,7 +228,7 @@ class T0Agent(Agent):
                     provider=provider,
                     temperature=0.3,
                     max_tokens=2000,
-                    timeout=120.0,  # Increased from 30s to 120s for complex TDD tasks
+                    timeout=600.0,  # Increased to 600s for enterprise-scale tasks
                     # Add cost tracking context
                     workflow_id=context.get("request_id"),
                     tenant_id=context.get("tenant_id"),

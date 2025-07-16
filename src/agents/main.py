@@ -78,7 +78,7 @@ class AgentExecutionRequest(BaseModel):
     task: Task
     tier: str  # Accept string and convert to AgentTier
     context: Dict[str, Any] = Field(default_factory=dict)
-    timeout: int = Field(default=300, description="Timeout in seconds")
+    timeout: int = Field(default=600, description="Timeout in seconds")
 
 
 class AgentFactory:
