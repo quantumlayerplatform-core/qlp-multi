@@ -173,9 +173,11 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
         tenant_id=request.get("tenant_id")
     )
     
-    if hap_result.severity >= Severity.HIGH:
+    # Use configurable threshold for request blocking
+    blocking_threshold = getattr(Severity, settings.HAP_REQUEST_BLOCKING_THRESHOLD, Severity.HIGH)
+    if hap_result.severity >= blocking_threshold:
         activity.logger.warning(
-            f"Request blocked by HAP - Severity: {hap_result.severity}, Categories: {hap_result.categories}"
+            f"Request blocked by HAP - Severity: {hap_result.severity}, Categories: {hap_result.categories}, Threshold: {blocking_threshold}"
         )
         raise ValueError(f"Content policy violation: {hap_result.explanation}")
     
@@ -272,6 +274,11 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
             task_context = shared_context.get_context_for_task(task_id)
             task_context.update(execution_context)  # Merge execution context
             
+            # Check for tier override in request
+            task_metadata = task.get("metadata", {})
+            if request.get("tier_override"):
+                task_metadata["tier_override"] = request["tier_override"]
+            
             workflow_tasks.append({
                 "task_id": task_id,
                 "type": task.get("type"),
@@ -279,7 +286,7 @@ async def decompose_request_activity(request: Dict[str, Any]) -> Tuple[List[Dict
                 "complexity": task.get("complexity", "simple"),
                 "dependencies": task_dependencies,
                 "context": task_context,
-                "metadata": task.get("metadata", {})
+                "metadata": task_metadata
             })
         
         # Update shared context progress
@@ -299,6 +306,20 @@ async def select_agent_tier_activity(task: Dict[str, Any]) -> str:
     from ..common.config import settings
     
     activity.logger.info(f"Selecting agent tier for task: {task['task_id']}")
+    
+    # Check for tier override in task metadata
+    if task.get("metadata", {}).get("tier_override"):
+        override_tier = task["metadata"]["tier_override"]
+        if override_tier in ["T0", "T1", "T2", "T3"]:
+            activity.logger.info(f"Using tier override: {override_tier}")
+            return override_tier
+    
+    # Check for tier preference in task context
+    if task.get("context", {}).get("preferred_tier"):
+        preferred_tier = task["context"]["preferred_tier"]
+        if preferred_tier in ["T0", "T1", "T2", "T3"]:
+            activity.logger.info(f"Using preferred tier: {preferred_tier}")
+            return preferred_tier
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Get historical performance data
@@ -662,15 +683,18 @@ async def _execute_standard(task: Dict[str, Any], tier: str, request_id: str, sh
                 }
                 
                 # If content is inappropriate, mark as failed
-                if hap_result.severity >= Severity.HIGH:
+                # Use configurable threshold for output blocking
+                output_blocking_threshold = getattr(Severity, settings.HAP_OUTPUT_BLOCKING_THRESHOLD, Severity.HIGH)
+                if hap_result.severity >= output_blocking_threshold:
                     activity.logger.warning(
-                        f"Agent output blocked by HAP - Task: {task['task_id']}, Severity: {hap_result.severity}"
+                        f"Agent output blocked by HAP - Task: {task['task_id']}, Severity: {hap_result.severity}, Threshold: {output_blocking_threshold}"
                     )
                     result["status"] = "failed"
                     result["output"] = {
                         "error": "Agent generated inappropriate content",
                         "hap_severity": hap_result.severity.value,
-                        "hap_explanation": hap_result.explanation
+                        "hap_explanation": hap_result.explanation,
+                        "hap_threshold": output_blocking_threshold.value
                     }
                     result["output_type"] = "error"
         

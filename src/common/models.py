@@ -74,6 +74,8 @@ class ExecutionRequest(BaseModel):
     requirements: Optional[str] = None
     constraints: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    tier_override: Optional[str] = None  # Force specific agent tier (T0, T1, T2, T3)
+    tier_overrides: Optional[Dict[str, str]] = None  # Per-task-type tier overrides
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 

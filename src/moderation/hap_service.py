@@ -169,6 +169,64 @@ class HAPService:
         
         return text.lower().strip()
     
+    def _is_technical_context(self, text: str) -> bool:
+        """Detect if text is in technical/programming context"""
+        technical_indicators = [
+            # Programming constructs
+            r'\b(process|thread|service|daemon|worker|job|task)\b',
+            r'\b(command|bash|shell|terminal|cli|cmd|powershell)\b',
+            r'\b(function|method|class|module|package|library)\b',
+            r'\b(variable|parameter|argument|config|setting)\b',
+            r'\b(error|exception|debug|log|trace|stack)\b',
+            r'\b(server|client|api|endpoint|request|response)\b',
+            r'\b(database|query|table|index|schema)\b',
+            r'\b(git|commit|branch|merge|pull|push)\b',
+            
+            # Code syntax patterns
+            r'[a-zA-Z_]\w*\s*\(',  # Function calls
+            r'{\s*["\']?\w+["\']?\s*:',  # JSON/dict syntax
+            r'\[\s*\d+\s*\]',  # Array indexing
+            r'->\s*\w+',  # Arrow functions/pointers
+            r'::\w+',  # Scope resolution
+            r'\$\w+',  # Variables (bash, PHP, etc)
+            r'#include|import|require|use',  # Import statements
+            
+            # Command line patterns
+            r'^\s*\$\s+',  # Shell prompt
+            r'^\s*>\s+',  # Command prompt
+            r'sudo\s+',  # Admin commands
+            r'\s+-+\w+',  # Command flags
+            r'\|\s*\w+',  # Pipe commands
+            
+            # File paths and extensions
+            r'/\w+/\w+',  # Unix paths
+            r'\\\w+\\\w+',  # Windows paths
+            r'\.\w{1,4}$',  # File extensions
+            r'\.(py|js|java|cpp|go|rs|rb|php|sh|yaml|json|xml|html|css)$'
+        ]
+        
+        # Check if any technical indicator is present
+        for pattern in technical_indicators:
+            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
+                return True
+        
+        # Check for code-like formatting
+        lines = text.split('\n')
+        code_line_count = 0
+        for line in lines:
+            # Indented lines (common in code)
+            if line.startswith(('    ', '\t')):
+                code_line_count += 1
+            # Comments
+            if re.match(r'^\s*(//|#|/\*|\*|--)', line):
+                code_line_count += 1
+        
+        # If more than 30% of lines look like code, it's technical
+        if len(lines) > 3 and code_line_count / len(lines) > 0.3:
+            return True
+            
+        return False
+    
     async def check_content(
         self,
         request: HAPCheckRequest
@@ -225,42 +283,90 @@ class HAPService:
         normalized: str,
         original: str
     ) -> HAPCheckResult:
-        """Fast rule-based checking"""
+        """Fast rule-based checking with technical context awareness"""
         categories = []
         max_severity = Severity.CLEAN
         explanations = []
         
+        # Check if this is technical content
+        is_technical = self._is_technical_context(original)
+        
+        # Define technical term adjustments
+        technical_adjustments = {
+            'kill': {'technical': Severity.LOW, 'general': Severity.HIGH},
+            'abort': {'technical': Severity.LOW, 'general': Severity.MEDIUM},
+            'attack': {'technical': Severity.LOW, 'general': Severity.HIGH},
+            'die': {'technical': Severity.LOW, 'general': Severity.HIGH},
+            'crash': {'technical': Severity.LOW, 'general': Severity.MEDIUM},
+            'destroy': {'technical': Severity.LOW, 'general': Severity.HIGH},
+            'terminate': {'technical': Severity.LOW, 'general': Severity.MEDIUM},
+            'execute': {'technical': Severity.CLEAN, 'general': Severity.MEDIUM},
+            'hang': {'technical': Severity.LOW, 'general': Severity.MEDIUM},
+            'deadlock': {'technical': Severity.CLEAN, 'general': Severity.LOW},
+        }
+        
         # Check against patterns
         for category, patterns in self.rule_patterns.items():
             for pattern in patterns:
-                if pattern.search(normalized) or pattern.search(original):
-                    categories.append(category)
-                    explanations.append(f"Detected {category.value}")
+                match = pattern.search(normalized) or pattern.search(original)
+                if match:
+                    # Extract the matched word
+                    matched_word = match.group(0).lower().strip()
                     
-                    # Set severity based on category
-                    if category in [Category.HATE_SPEECH, Category.VIOLENCE]:
-                        max_severity = max(max_severity, Severity.HIGH)
-                    elif category in [Category.ABUSE, Category.SELF_HARM]:
-                        max_severity = max(max_severity, Severity.HIGH)
+                    # Check if this is a technical term that should be adjusted
+                    if is_technical and matched_word in technical_adjustments:
+                        # Apply technical context severity
+                        adjusted_severity = technical_adjustments[matched_word]['technical']
+                        if adjusted_severity != Severity.CLEAN:
+                            categories.append(category)
+                            explanations.append(f"Detected {category.value} (technical context: '{matched_word}')")
+                            max_severity = max(max_severity, adjusted_severity)
                     else:
-                        max_severity = max(max_severity, Severity.MEDIUM)
+                        # Original severity logic
+                        categories.append(category)
+                        explanations.append(f"Detected {category.value}")
+                        
+                        # Set severity based on category
+                        if category in [Category.HATE_SPEECH, Category.VIOLENCE]:
+                            max_severity = max(max_severity, Severity.HIGH)
+                        elif category in [Category.ABUSE, Category.SELF_HARM]:
+                            max_severity = max(max_severity, Severity.HIGH)
+                        else:
+                            max_severity = max(max_severity, Severity.MEDIUM)
                     break
         
-        # Check profanity list
+        # Check profanity list with context awareness
         words = normalized.split()
         profane_words = [w for w in words if w in self.profanity_list]
         if profane_words:
-            categories.append(Category.PROFANITY)
-            max_severity = max(max_severity, Severity.LOW)
-            explanations.append(f"Contains profanity: {', '.join(profane_words[:3])}")
+            # In technical context, mild insults might be variable names or comments
+            if is_technical and all(w in ['stupid', 'idiot', 'dumb', 'dummy'] for w in profane_words):
+                # These are often used in technical contexts (e.g., dummy data, stupid sort)
+                max_severity = max(max_severity, Severity.CLEAN)
+                explanations.append(f"Technical usage of terms: {', '.join(profane_words[:3])}")
+            else:
+                categories.append(Category.PROFANITY)
+                max_severity = max(max_severity, Severity.LOW)
+                explanations.append(f"Contains profanity: {', '.join(profane_words[:3])}")
         
-        # Determine result
-        if max_severity == Severity.CLEAN:
-            result = "clean"
-        elif max_severity in [Severity.LOW, Severity.MEDIUM]:
-            result = "flagged"
+        # Adjust result based on technical context
+        if is_technical and max_severity <= Severity.MEDIUM:
+            # In technical context, be more lenient
+            if max_severity == Severity.MEDIUM:
+                max_severity = Severity.LOW
+            result = "flagged" if max_severity > Severity.CLEAN else "clean"
         else:
-            result = "blocked"
+            # Determine result normally
+            if max_severity == Severity.CLEAN:
+                result = "clean"
+            elif max_severity in [Severity.LOW, Severity.MEDIUM]:
+                result = "flagged"
+            else:
+                result = "blocked"
+        
+        # Add technical context note to explanation
+        if is_technical and explanations:
+            explanations.append("(Technical context detected)")
         
         return HAPCheckResult(
             result=result,

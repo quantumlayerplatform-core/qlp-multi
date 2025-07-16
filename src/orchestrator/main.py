@@ -1533,12 +1533,15 @@ async def execute_request(request: ExecutionRequest):
             tenant_id=request.tenant_id
         )
         
-        if hap_result.severity >= Severity.HIGH:
+        # Use configurable threshold for request blocking
+        blocking_threshold = getattr(Severity, settings.HAP_REQUEST_BLOCKING_THRESHOLD, Severity.HIGH)
+        if hap_result.severity >= blocking_threshold:
             logger.warning(
                 "Request blocked by HAP",
                 user_id=request.user_id,
                 severity=hap_result.severity,
-                categories=hap_result.categories
+                categories=hap_result.categories,
+                blocking_threshold=blocking_threshold.value
             )
             return JSONResponse(
                 status_code=400,
@@ -1546,7 +1549,8 @@ async def execute_request(request: ExecutionRequest):
                     "error": "Content policy violation",
                     "detail": hap_result.explanation,
                     "suggestions": hap_result.suggestions,
-                    "severity": hap_result.severity.value
+                    "severity": hap_result.severity.value,
+                    "threshold": blocking_threshold.value
                 }
             )
         
@@ -1571,7 +1575,8 @@ async def execute_request(request: ExecutionRequest):
                 "user_id": request.user_id,
                 "requirements": request.requirements,
                 "constraints": request.constraints,
-                "metadata": request.metadata
+                "metadata": request.metadata,
+                "tier_override": request.tier_override  # Pass tier override to workflow
             },
             id=f"qlp-execution-{request.id}",
             task_queue="qlp-main"

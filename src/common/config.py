@@ -59,6 +59,8 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/0",
         description="Redis connection URL"
     )
+    REDIS_HOST: str = Field(default="redis", description="Redis host")
+    REDIS_PORT: int = Field(default=6379, description="Redis port")
     
     # Temporal
     TEMPORAL_SERVER: str = Field(
@@ -114,6 +116,18 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = Field(default=True)
     RATE_LIMIT_PER_MINUTE: int = Field(default=60)
     
+    # Provider-specific rate limits (requests per minute)
+    OPENAI_RPM: int = Field(default=60, description="OpenAI requests per minute")
+    OPENAI_TPM: int = Field(default=90000, description="OpenAI tokens per minute")
+    AZURE_RPM: int = Field(default=240, description="Azure OpenAI requests per minute")
+    AZURE_TPM: int = Field(default=240000, description="Azure OpenAI tokens per minute")
+    ANTHROPIC_RPM: int = Field(default=50, description="Anthropic requests per minute")
+    ANTHROPIC_TPM: int = Field(default=100000, description="Anthropic tokens per minute")
+    GROQ_RPM: int = Field(default=30, description="Groq requests per minute")
+    GROQ_TPM: int = Field(default=6000, description="Groq tokens per minute")
+    AWS_BEDROCK_RPM: int = Field(default=200, description="AWS Bedrock requests per minute")
+    AWS_BEDROCK_TPM: int = Field(default=400000, description="AWS Bedrock tokens per minute")
+    
     # Storage
     STORAGE_BACKEND: str = Field(
         default="local",
@@ -163,6 +177,13 @@ class Settings(BaseSettings):
     AITL_AUTO_PROCESS: bool = Field(default=False, description="Auto-process AITL reviews")
     AITL_CONFIDENCE_THRESHOLD: float = Field(default=0.5, description="Confidence threshold for AITL approval")
     
+    # HAP Configuration (Hate, Abuse, Profanity)
+    HAP_ENABLED: bool = Field(default=True, description="Enable HAP content moderation")
+    HAP_TECHNICAL_CONTEXT_AWARE: bool = Field(default=True, description="Enable technical context detection")
+    HAP_REQUEST_BLOCKING_THRESHOLD: str = Field(default="HIGH", description="Severity threshold for blocking requests (LOW, MEDIUM, HIGH, CRITICAL)")
+    HAP_OUTPUT_BLOCKING_THRESHOLD: str = Field(default="HIGH", description="Severity threshold for blocking outputs (LOW, MEDIUM, HIGH, CRITICAL)")
+    HAP_PROFANITY_SENSITIVITY: str = Field(default="LOW", description="Profanity detection sensitivity (LOW, MEDIUM, HIGH)")
+    
     # LLM Provider Selection by Tier
     LLM_T0_PROVIDER: str = Field(default="azure", description="Provider for T0 agents")
     LLM_T1_PROVIDER: str = Field(default="azure", description="Provider for T1 agents")
@@ -184,6 +205,65 @@ class Settings(BaseSettings):
     # AWS Bedrock Configuration
     AWS_ACCESS_KEY_ID: Optional[str] = Field(default=None, description="AWS Access Key ID")
     AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, description="AWS Secret Access Key")
+    
+    # Workflow Configuration - Enterprise Scale
+    WORKFLOW_MAX_BATCH_SIZE: int = Field(default=50, description="Maximum tasks per batch for parallel execution")
+    WORKFLOW_MAX_CONCURRENT_ACTIVITIES: int = Field(default=100, description="Max concurrent activities per worker")
+    WORKFLOW_MAX_CONCURRENT_WORKFLOWS: int = Field(default=50, description="Max concurrent workflow tasks")
+    WORKFLOW_ACTIVITY_TIMEOUT_MINUTES: int = Field(default=60, description="Default activity timeout in minutes")
+    WORKFLOW_LONG_ACTIVITY_TIMEOUT_MINUTES: int = Field(default=180, description="Long activity timeout in minutes")
+    WORKFLOW_HEARTBEAT_TIMEOUT_MINUTES: int = Field(default=20, description="Heartbeat timeout in minutes")
+    WORKFLOW_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=10, description="Heartbeat interval in seconds")
+    WORKFLOW_MAX_DURATION_HOURS: int = Field(default=6, description="Maximum workflow duration in hours")
+    
+    # Dynamic Scaling Configuration
+    ENABLE_DYNAMIC_SCALING: bool = Field(default=True, description="Enable dynamic resource scaling")
+    MIN_BATCH_SIZE: int = Field(default=5, description="Minimum batch size for parallel execution")
+    MAX_BATCH_SIZE: int = Field(default=100, description="Maximum batch size for parallel execution")
+    CPU_THRESHOLD_HIGH: float = Field(default=80.0, description="CPU threshold for scaling down")
+    CPU_THRESHOLD_LOW: float = Field(default=50.0, description="CPU threshold for scaling up")
+    MEMORY_THRESHOLD_HIGH: float = Field(default=80.0, description="Memory threshold for scaling down")
+    MEMORY_THRESHOLD_LOW: float = Field(default=50.0, description="Memory threshold for scaling up")
+    
+    # Retry Configuration
+    RETRY_MAX_ATTEMPTS: int = Field(default=5, description="Maximum retry attempts")
+    RETRY_INITIAL_INTERVAL_SECONDS: int = Field(default=2, description="Initial retry interval")
+    RETRY_BACKOFF_COEFFICIENT: float = Field(default=2.5, description="Retry backoff coefficient")
+    RETRY_MAX_INTERVAL_MINUTES: int = Field(default=5, description="Maximum retry interval")
+    
+    # Circuit Breaker Configuration
+    CIRCUIT_BREAKER_ENABLED: bool = Field(default=True, description="Enable circuit breaker")
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = Field(default=5, description="Failure threshold before opening")
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: int = Field(default=60, description="Recovery timeout in seconds")
+    CIRCUIT_BREAKER_EXPECTED_EXCEPTION_TYPES: List[str] = Field(
+        default=["TimeoutError", "ConnectionError"], 
+        description="Exception types that trigger circuit breaker"
+    )
+    
+    # Monitoring Configuration
+    ENABLE_METRICS: bool = Field(default=True, description="Enable metrics collection")
+    ENABLE_DISTRIBUTED_TRACING: bool = Field(default=True, description="Enable distributed tracing")
+    METRICS_EXPORT_INTERVAL: int = Field(default=60, description="Metrics export interval in seconds")
+    JAEGER_ENDPOINT: Optional[str] = Field(default="http://localhost:14268/api/traces", description="Jaeger endpoint")
+    
+    # Enterprise Features
+    ENTERPRISE_FEATURES_ENABLED: bool = Field(default=True, description="Enable enterprise features")
+    ENABLE_TASK_PRIORITY_QUEUE: bool = Field(default=True, description="Enable priority-based task scheduling")
+    ENABLE_RESOURCE_MONITORING: bool = Field(default=True, description="Enable resource usage monitoring")
+    ENABLE_ADAPTIVE_TIMEOUTS: bool = Field(default=True, description="Enable adaptive timeout calculation")
+    ENABLE_INTELLIGENT_RETRY: bool = Field(default=True, description="Enable intelligent retry with exponential backoff")
+    
+    # GitHub Configuration
+    GITHUB_TOKEN: Optional[str] = Field(default=None, description="GitHub personal access token")
+    GITHUB_DEFAULT_BRANCH: str = Field(default="main", description="Default branch for GitHub repos")
+    GITHUB_AUTO_CREATE_REPO: bool = Field(default=True, description="Auto-create GitHub repository")
+    
+    # Universal Language Support
+    DETECT_LANGUAGE_FROM_REQUIREMENTS: bool = Field(default=True, description="Auto-detect programming language")
+    SUPPORTED_LANGUAGES: List[str] = Field(
+        default=["python", "javascript", "typescript", "java", "go", "rust", "cpp", "csharp", "ruby", "php", "swift", "kotlin", "scala", "r", "julia", "dart", "lua", "perl", "shell", "powershell", "sql", "html", "css", "yaml", "json", "xml", "markdown"],
+        description="List of supported programming languages"
+    )
     AWS_SESSION_TOKEN: Optional[str] = Field(default=None, description="AWS Session Token (for temporary credentials)")
     AWS_REGION: str = Field(default="us-east-1", description="AWS region for Bedrock services")
     AWS_BEDROCK_ENDPOINT: Optional[str] = Field(default=None, description="Custom AWS Bedrock endpoint (for VPC/private endpoints)")
