@@ -10,9 +10,11 @@ This document outlines the deployment strategy for the Quantum Layer Platform (Q
 |----------|------------------|------------|---------------|
 | **Azure** | £4,000 (~$5,000) | Not specified | Primary infrastructure, AKS, managed services |
 | **AWS** | £950 (~$1,200) | Not specified | Bedrock LLM, S3 backups, Lambda functions |
+| **AWS (Temporal)** | $1,500 | Not specified | Temporal on AWS EKS, EC2 instances |
 | **MongoDB Atlas** | $500 | April 2026 | Document storage, capsule storage |
 | **Temporal Cloud** | $906.45 | October 2025 | Workflow orchestration (managed) |
-| **Total Value** | ~$7,600 | - | 6-12 months runway |
+| **Supabase** | $300 | 12 months | PostgreSQL, Auth, Realtime, Storage |
+| **Total Value** | ~$9,400+ | - | 9-15 months runway |
 
 ## Current Architecture Overview
 

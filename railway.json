@@ -1,0 +1,29 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "docker-entrypoint.sh",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 5,
+    "region": "us-west1"
+  },
+  "environments": {
+    "production": {
+      "deploy": {
+        "minInstances": 1,
+        "maxInstances": 3
+      }
+    },
+    "development": {
+      "deploy": {
+        "minInstances": 0,
+        "maxInstances": 1
+      }
+    }
+  }
+}
