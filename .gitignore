@@ -257,3 +257,11 @@ htmlcov/
 *.temp
 *.bak
 *.old
+
+# Ignore files with secrets
+.env.cloud
+.env.local-backup
+deployments/azure/acr-config.env
+deployments/kubernetes/aks/01-secrets.yaml
+deployments/kubernetes/aks/temporal-cloud/azure-openai-secret.yaml
+deployments/kubernetes/aks/temporal-cloud/temporal-cloud-secret.yaml
