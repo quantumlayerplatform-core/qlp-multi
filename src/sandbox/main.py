@@ -9,7 +9,10 @@ import asyncio
 import docker
 import json
 import logging
-import os
+import os as os_module
+from src.common.structured_logging import setup_logging, LogContext, log_operation
+from src.common.logging_middleware import setup_request_logging
+from src.common.logging_decorators import log_function, measure_performance
 import tempfile
 import time
 import uuid
@@ -34,12 +37,12 @@ except ImportError:
     kata_available = False
     KataExecutor = None
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Setup structured logging
+logger = setup_logging(
+    service_name="execution-sandbox",
+    log_level=os_module.getenv("LOG_LEVEL", "INFO"),
+    json_output=os_module.getenv("ENVIRONMENT", "development") == "production"
 )
-logger = logging.getLogger(__name__)
 
 # Supported languages and their Docker images
 LANGUAGE_IMAGES = {
@@ -393,6 +396,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+# Setup structured request logging
+setup_request_logging(app, "execution-sandbox")
 
 # Configure CORS
 app.add_middleware(

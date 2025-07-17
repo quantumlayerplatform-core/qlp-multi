@@ -13,6 +13,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import structlog
+import os
+from src.common.structured_logging import setup_logging, LogContext, log_operation
+from src.common.logging_middleware import setup_request_logging
+from src.common.logging_decorators import log_function, measure_performance
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, 
@@ -37,9 +41,17 @@ from src.common.models import (
 )
 from src.common.config import settings
 
-logger = structlog.get_logger()
+# Setup structured logging
+logger = setup_logging(
+    service_name="vector-memory",
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    json_output=os.getenv("ENVIRONMENT", "development") == "production"
+)
 
 app = FastAPI(title="Quantum Layer Platform Vector Memory Service", version="1.0.0")
+
+# Setup structured request logging
+setup_request_logging(app, "vector-memory")
 
 # Configure CORS
 app.add_middleware(

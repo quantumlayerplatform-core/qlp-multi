@@ -15,6 +15,10 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 import structlog
+import os
+from src.common.structured_logging import setup_logging, LogContext, log_operation
+from src.common.logging_middleware import setup_request_logging
+from src.common.logging_decorators import log_function, measure_performance
 
 from src.common.models import (
     Task,
@@ -26,6 +30,13 @@ from src.common.models import (
 from src.common.config import settings
 from src.memory.client import VectorMemoryClient
 from src.agents.base_agents import Agent, T0Agent, T1Agent, T2Agent, T3Agent
+
+# Setup structured logging
+logger = setup_logging(
+    service_name="agent-factory",
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    json_output=os.getenv("ENVIRONMENT", "development") == "production"
+)
 
 # Import ensemble components - do this after base agents to avoid circular import
 try:
@@ -40,9 +51,10 @@ except ImportError as e:
     logger.warning(f"Ensemble agents not available: {e}")
     ENSEMBLE_AVAILABLE = False
 
-logger = structlog.get_logger()
-
 app = FastAPI(title="Quantum Layer Platform Agent Factory", version="1.0.0")
+
+# Setup structured request logging
+setup_request_logging(app, "agent-factory")
 
 # Configure CORS
 app.add_middleware(

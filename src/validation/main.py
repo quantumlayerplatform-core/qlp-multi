@@ -16,6 +16,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import structlog
+import os as os_module
+from src.common.structured_logging import setup_logging, LogContext, log_operation
+from src.common.logging_middleware import setup_request_logging
+from src.common.logging_decorators import log_function, measure_performance
 import ast
 import black
 import pylint.lint
@@ -37,9 +41,17 @@ from src.common.models import (
 )
 from src.common.config import settings
 
-logger = structlog.get_logger()
+# Setup structured logging
+logger = setup_logging(
+    service_name="validation-mesh",
+    log_level=os_module.getenv("LOG_LEVEL", "INFO"),
+    json_output=os_module.getenv("ENVIRONMENT", "development") == "production"
+)
 
 app = FastAPI(title="Quantum Layer Platform Validation Mesh", version="1.0.0")
+
+# Setup structured request logging
+setup_request_logging(app, "validation-mesh")
 
 # Configure CORS
 app.add_middleware(

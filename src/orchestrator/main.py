@@ -24,6 +24,9 @@ from temporalio.client import WorkflowHandle
 # from temporalio.exceptions import WorkflowNotFoundError  # Not available in this version
 from src.common.temporal_cloud import get_temporal_client as get_temporal_client_cloud
 import structlog
+from src.common.structured_logging import setup_logging, LogContext, log_api_request
+from src.common.logging_middleware import setup_request_logging
+from src.common.logging_decorators import log_function, measure_performance
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from fastapi import Query
@@ -48,6 +51,7 @@ from src.validation.client import ValidationMeshClient
 from src.orchestrator.github_actions_integration import GitHubActionsIntegration, integrate_ci_confidence
 # from src.orchestrator.aitl_endpoints import include_aitl_routes
 from src.nlp.extended_advanced_patterns import ExtendedAdvancedUniversalNLPEngine
+from src.orchestrator.progress_endpoints import register_progress_endpoints
 from src.nlp.pattern_selection_engine_fixed import FixedPatternSelectionEngine as PatternSelectionEngine
 
 # Import production API v2 components
@@ -58,7 +62,12 @@ from src.nlp.pattern_selection_engine import PatternType
 from src.orchestrator.unified_optimization_engine import UnifiedOptimizationEngine, OptimizationContext
 from src.orchestrator.aitl_system import convert_hitl_to_aitl, AITLDecision
 
-logger = structlog.get_logger()
+# Setup structured logging
+logger = setup_logging(
+    service_name="orchestrator",
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    json_output=os.getenv("ENVIRONMENT", "development") == "production"
+)
 
 app = FastAPI(
     title="Quantum Layer Platform Meta-Orchestrator", 
@@ -68,21 +77,29 @@ app = FastAPI(
     redoc_url=None  # Disable default redoc - we'll use custom
 )
 
+# Setup structured request logging
+setup_request_logging(app, "orchestrator")
+
 # Initialize Temporal client at startup
 @app.on_event("startup")
 async def startup_event():
     """Initialize shared resources at startup"""
-    logger.info("🚀 Starting up orchestrator, connecting to Temporal")
+    with LogContext(event="startup", phase="temporal_connection"):
+        logger.info("Starting up orchestrator, connecting to Temporal")
     try:
         app.state.temporal_client = await get_temporal_client_cloud()
-        logger.info("✅ Connected to Temporal successfully")
+        logger.info("Connected to Temporal successfully", 
+                   temporal_address=os.getenv("TEMPORAL_ADDRESS", "temporal:7233"))
     except Exception as e:
-        logger.error(f"❌ Failed to connect to Temporal: {e}")
+        logger.error("Failed to connect to Temporal", error=e)
         # Don't raise, allow app to start but log the error
         app.state.temporal_client = None
 
 # Setup production middleware (includes CORS, security headers, monitoring, etc.)
 setup_middleware(app)
+
+# Register progress streaming endpoints
+register_progress_endpoints(app)
 
 # Add deprecation middleware for v1 endpoints
 from src.orchestrator.deprecation_middleware import deprecation_middleware
