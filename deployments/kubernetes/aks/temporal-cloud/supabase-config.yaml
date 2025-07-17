@@ -1,0 +1,23 @@
+# Add Supabase configuration to existing ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qlp-config
+  namespace: qlp-production
+data:
+  # Supabase PostgreSQL
+  DATABASE_URL: "postgresql://postgres:nwGE5hunfncm57NU@db.piqrwahqrxuyfnzfoosq.supabase.co:5432/postgres"
+  POSTGRES_HOST: "db.piqrwahqrxuyfnzfoosq.supabase.co"
+  POSTGRES_DB: "postgres"
+  POSTGRES_PORT: "5432"
+---
+# Create secret for PostgreSQL credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: qlp-production
+type: Opaque
+stringData:
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "nwGE5hunfncm57NU"

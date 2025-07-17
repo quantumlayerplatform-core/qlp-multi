@@ -1,0 +1,257 @@
+---
+# Temporal deployment for AKS
+# Using StatefulSet for persistence
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: qlp-production
+  labels:
+    app: temporal
+spec:
+  type: ClusterIP
+  selector:
+    app: temporal
+  ports:
+  - port: 7233
+    targetPort: 7233
+    name: grpc-frontend
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: qlp-production
+  labels:
+    app: temporal-ui
+spec:
+  type: ClusterIP
+  selector:
+    app: temporal-ui
+  ports:
+  - port: 8088
+    targetPort: 8088
+    name: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: temporal
+  namespace: qlp-production
+  labels:
+    app: temporal
+spec:
+  serviceName: temporal
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "qlp"
+        effect: "NoSchedule"
+      nodeSelector:
+        workload: "qlp"
+      containers:
+      - name: temporal
+        image: temporalio/auto-setup:1.22.4
+        ports:
+        - containerPort: 7233
+          name: grpc-frontend
+        env:
+        - name: DB
+          value: "postgresql"
+        - name: DB_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "qlpadmin"
+        - name: POSTGRES_PWD
+          valueFrom:
+            secretKeyRef:
+              name: qlp-azure-secrets
+              key: POSTGRES_PWD
+        - name: POSTGRES_SEEDS
+          value: "qlp-postgres-production.postgres.database.azure.com"
+        - name: DYNAMIC_CONFIG_FILE_PATH
+          value: "/etc/temporal/dynamic-config.yaml"
+        - name: ENABLE_ES
+          value: "false"
+        - name: SKIP_SCHEMA_SETUP
+          value: "false"
+        - name: TEMPORAL_ADDRESS
+          value: "temporal:7233"
+        volumeMounts:
+        - name: dynamic-config
+          mountPath: /etc/temporal
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: dynamic-config
+        configMap:
+          name: temporal-dynamic-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: qlp-production
+  labels:
+    app: temporal-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-ui
+  template:
+    metadata:
+      labels:
+        app: temporal-ui
+    spec:
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "qlp"
+        effect: "NoSchedule"
+      nodeSelector:
+        workload: "qlp"
+      containers:
+      - name: temporal-ui
+        image: temporalio/ui:2.21.3
+        ports:
+        - containerPort: 8088
+          name: http
+        env:
+        - name: TEMPORAL_ADDRESS
+          value: "temporal:7233"
+        - name: TEMPORAL_CORS_ORIGINS
+          value: "http://localhost:3000,https://qlp.yourdomain.com"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temporal-dynamic-config
+  namespace: qlp-production
+data:
+  dynamic-config.yaml: |
+    limit.maxIDLength:
+      - value: 1024
+        constraints: {}
+    system.forceSearchAttributesCacheRefreshOnRead:
+      - value: true
+        constraints: {}
+    frontend.enableClientVersionCheck:
+      - value: false
+        constraints: {}
+    frontend.workflowExecutionRetentionTTL:
+      - value: 2592000s  # 30 days
+        constraints: {}
+    history.maximumBufferedEventsBatch:
+      - value: 1000
+        constraints: {}
+    matching.numTaskqueueReadPartitions:
+      - value: 8
+        constraints: {}
+    matching.numTaskqueueWritePartitions:
+      - value: 8
+        constraints: {}
+---
+# Temporal Worker deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: qlp-production
+  labels:
+    app: temporal-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: temporal-worker
+  template:
+    metadata:
+      labels:
+        app: temporal-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: qlp-service-account
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "qlp"
+        effect: "NoSchedule"
+      nodeSelector:
+        workload: "qlp"
+      containers:
+      - name: temporal-worker
+        image: ${ACR_LOGIN_SERVER}/qlp-temporal-worker:${IMAGE_TAG}
+        env:
+        - name: TEMPORAL_SERVER
+          value: "temporal:7233"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: qlp-azure-secrets
+              key: DATABASE_URL
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: AZURE_OPENAI_ENDPOINT
+        - name: AZURE_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: AZURE_OPENAI_API_KEY
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: qlp-secrets
+              key: GITHUB_TOKEN
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep -v grep | grep -q python"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep -v grep | grep -q python"
+          initialDelaySeconds: 10
+          periodSeconds: 10

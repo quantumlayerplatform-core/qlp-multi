@@ -15,7 +15,7 @@ langchain==0.0.339
 llama-index==0.9.13
 
 # Temporal workflow
-temporalio==1.4.0
+temporalio==1.14.1
 
 # Vector databases
 qdrant-client==1.14.3

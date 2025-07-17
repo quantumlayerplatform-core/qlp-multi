@@ -1,0 +1,165 @@
+# Remove the self-hosted Temporal server - we're using Temporal Cloud
+---
+# Temporal Worker Deployment that connects to Temporal Cloud
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: qlp-production
+spec:
+  replicas: 2  # Run multiple workers for high availability
+  selector:
+    matchLabels:
+      app: temporal-worker
+  template:
+    metadata:
+      labels:
+        app: temporal-worker
+    spec:
+      containers:
+      - name: temporal-worker
+        image: qlpregistry.azurecr.io/qlp/orchestrator:latest
+        command: ["python", "-m", "src.orchestrator.worker_production_db"]
+        env:
+        - name: SERVICE_NAME
+          value: "temporal-worker"
+        - name: WORKER_MODE
+          value: "true"
+        
+        # Temporal Cloud Connection
+        - name: TEMPORAL_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+        - name: TEMPORAL_NAMESPACE
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_NAMESPACE
+        - name: TEMPORAL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_API_KEY
+        
+        # Override the old TEMPORAL_SERVER env var
+        - name: TEMPORAL_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+              
+        envFrom:
+        - configMapRef:
+            name: temporal-cloud-config
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 20
+          periodSeconds: 10
+---
+# Update Orchestrator to use Temporal Cloud
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: qlp-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      containers:
+      - name: orchestrator
+        image: qlpregistry.azurecr.io/qlp/orchestrator:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SERVICE_NAME
+          value: "orchestrator"
+        - name: PORT
+          value: "8000"
+        
+        # Temporal Cloud Connection
+        - name: TEMPORAL_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+        - name: TEMPORAL_NAMESPACE
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_NAMESPACE
+        - name: TEMPORAL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_API_KEY
+        - name: TEMPORAL_USE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_USE_API_KEY
+              
+        # Override old env var
+        - name: TEMPORAL_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+              
+        envFrom:
+        - configMapRef:
+            name: temporal-cloud-config
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10

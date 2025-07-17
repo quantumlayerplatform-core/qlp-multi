@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-sandbox
+  namespace: qlp-production
+  labels:
+    app: execution-sandbox
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: execution-sandbox
+  template:
+    metadata:
+      labels:
+        app: execution-sandbox
+    spec:
+      containers:
+      - name: execution-sandbox
+        image: qlpregistry.azurecr.io/qlp/execution-sandbox:latest
+        ports:
+        - containerPort: 8004
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        # Mount Docker socket for sandbox execution
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        securityContext:
+          privileged: true  # Required for Docker access
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-sandbox
+  namespace: qlp-production
+spec:
+  selector:
+    app: execution-sandbox
+  ports:
+  - port: 8004
+    targetPort: 8004
+  type: ClusterIP

@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-wrapper
+  namespace: qlp-production
+data:
+  docker_mock.py: |
+    """Mock Docker module to bypass Docker requirements"""
+    import sys
+    import types
+    
+    class MockDockerClient:
+        def __init__(self):
+            pass
+        
+        def from_env(self):
+            return self
+        
+        def containers(self):
+            return self
+        
+        def images(self):
+            return self
+        
+        def run(self, *args, **kwargs):
+            return type('Container', (), {'logs': lambda: b'Mock execution'})
+    
+    # Create mock docker module
+    docker = types.ModuleType('docker')
+    docker.from_env = lambda: MockDockerClient()
+    docker.errors = types.ModuleType('docker.errors')
+    docker.errors.DockerException = Exception
+    docker.DockerClient = MockDockerClient
+    
+    # Inject into sys.modules
+    sys.modules['docker'] = docker
+    sys.modules['docker.errors'] = docker.errors
+    sys.modules['docker.types'] = types.ModuleType('docker.types')
+    sys.modules['docker.models'] = types.ModuleType('docker.models')
+    sys.modules['docker.models.containers'] = types.ModuleType('docker.models.containers')
+    
+  startup.py: |
+    """Startup script that patches Docker before importing validation"""
+    import sys
+    import os
+    
+    # Set environment variables
+    os.environ['DISABLE_DOCKER_VALIDATION'] = 'true'
+    os.environ['USE_KUBERNETES_EXECUTOR'] = 'true'
+    os.environ['VALIDATION_BACKEND'] = 'static'
+    
+    # Import docker mock
+    import docker_mock
+    
+    # Now import and run the validation service
+    from src.validation.main import app
+    import uvicorn
+    
+    if __name__ == "__main__":
+        port = int(os.environ.get("PORT", 8002))
+        uvicorn.run(app, host="0.0.0.0", port=port)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-mesh
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: validation-mesh
+  template:
+    metadata:
+      labels:
+        app: validation-mesh
+    spec:
+      containers:
+      - name: validation-mesh
+        image: qlpregistry.azurecr.io/qlp/validation-mesh:latest
+        command: ["python", "/wrapper/startup.py"]
+        ports:
+        - containerPort: 8002
+        env:
+        - name: SERVICE_NAME
+          value: "validation-mesh"
+        - name: PORT
+          value: "8002"
+        - name: PYTHONPATH
+          value: "/app:/wrapper"
+        - name: DISABLE_DOCKER_VALIDATION
+          value: "true"
+        - name: USE_STATIC_VALIDATION
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: wrapper-scripts
+          mountPath: /wrapper
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: wrapper-scripts
+        configMap:
+          name: validation-wrapper

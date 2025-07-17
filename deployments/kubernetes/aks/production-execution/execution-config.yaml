@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: execution-config
+  namespace: qlp-production
+data:
+  config.yaml: |
+    # Universal Execution Service Configuration
+    service:
+      name: universal-execution
+      port: 8004
+      metrics_port: 9090
+    
+    execution:
+      default_timeout: 300
+      max_timeout: 3600
+      enable_gpu: false
+      enable_network: false
+      
+    security:
+      enable_sandboxing: true
+      allowed_syscalls: []
+      blocked_syscalls: []
+      
+    monitoring:
+      enable_metrics: true
+      enable_tracing: true
+      
+    limits:
+      max_concurrent_executions: 100
+      max_queue_size: 1000
+      
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runtime-profiles
+  namespace: qlp-production
+data:
+  profiles.yaml: |
+    runtime_profiles:
+      simple_script:
+        runtime_class: gvisor
+        timeout: 300
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+            
+      untrusted_code:
+        runtime_class: kata
+        timeout: 600
+        resources:
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        security_context:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          
+      system_code:
+        runtime_class: gvisor
+        timeout: 900
+        resources:
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+            
+      service_workload:
+        runtime_class: native
+        timeout: 3600
+        resources:
+          limits:
+            cpu: "4000m"
+            memory: "4Gi"
+          requests:
+            cpu: "1000m"
+            memory: "1Gi"
+        node_selector:
+          workload: "service"
+          
+      ml_workload:
+        runtime_class: native
+        timeout: 7200
+        resources:
+          limits:
+            cpu: "8000m"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: "2000m"
+            memory: "4Gi"
+        node_selector:
+          accelerator: "gpu"
+          
+    language_defaults:
+      python:
+        base_image: "python:3.11-slim"
+        install_commands:
+          - "pip install numpy pandas requests"
+      javascript:
+        base_image: "node:18-slim"
+        install_commands:
+          - "npm install axios lodash"
+      go:
+        base_image: "golang:1.21-alpine"
+        install_commands: []
+      rust:
+        base_image: "rust:1.75-slim"
+        install_commands: []
+      java:
+        base_image: "openjdk:17-slim"
+        install_commands: []

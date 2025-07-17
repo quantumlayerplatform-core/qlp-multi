@@ -65,7 +65,14 @@ else:
     openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     logger.info("Using OpenAI for embeddings")
 
-qdrant_client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
+# Initialize Qdrant client with cloud credentials if available
+import os
+
+qdrant_url = os.getenv('QDRANT_CLOUD_URL') or settings.QDRANT_URL
+qdrant_api_key = os.getenv('QDRANT_CLOUD_API_KEY') or settings.QDRANT_API_KEY
+
+logger.info(f"Initializing Qdrant client with URL: {qdrant_url}")
+qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
 
 # Collection names
 COLLECTIONS = {
@@ -178,10 +185,12 @@ class VectorMemoryService:
         """Get embedding vector for text using OpenAI or Azure OpenAI"""
         try:
             # Use deployment name for Azure or model name for OpenAI
-            model = "text-embedding-ada-002"
             if hasattr(settings, 'AZURE_OPENAI_ENDPOINT') and settings.AZURE_OPENAI_ENDPOINT:
-                # For Azure, use the deployment name
-                model = "text-embedding-ada-002"  # Azure deployment name
+                # For Azure, use the deployment name from your Azure OpenAI resource
+                model = "text-embedding-ada-002"  # Your Azure deployment name
+            else:
+                # For OpenAI, use the model name
+                model = "text-embedding-ada-002"
                 
             response = await self.openai.embeddings.create(
                 model=model,

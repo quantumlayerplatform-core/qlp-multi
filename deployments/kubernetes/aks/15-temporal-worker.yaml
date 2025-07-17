@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: qlp-production
+  labels:
+    app: temporal-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: temporal-worker
+  template:
+    metadata:
+      labels:
+        app: temporal-worker
+    spec:
+      containers:
+      - name: temporal-worker
+        image: qlpregistry.azurecr.io/qlp/temporal-worker:latest
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"

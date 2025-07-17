@@ -26,6 +26,14 @@ from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel, Field, ConfigDict
 
+# Import Kata executor if available
+try:
+    from .kata_executor import KataExecutor
+    kata_available = True
+except ImportError:
+    kata_available = False
+    KataExecutor = None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -87,6 +95,7 @@ class ExecutionRequest(BaseModel):
     resource_limits: Optional[ResourceLimits] = Field(default_factory=ResourceLimits)
     dependencies: Optional[List[str]] = Field(default=None, description="Package dependencies")
     test_mode: bool = Field(default=False, description="Run in test mode")
+    runtime: Optional[str] = Field(default="docker", description="Execution runtime: docker or kata")
 
 class ExecutionResult(BaseModel):
     """Result of code execution"""
@@ -98,6 +107,7 @@ class ExecutionResult(BaseModel):
     error: Optional[str] = None
     exit_code: Optional[int] = None
     duration_ms: Optional[int] = None
+    runtime: Optional[str] = Field(default="docker", description="Runtime used for execution")
     resource_usage: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
@@ -344,11 +354,12 @@ class SandboxManager:
 
 # Global sandbox manager
 sandbox_manager = None
+kata_executor = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
-    global sandbox_manager
+    global sandbox_manager, kata_executor
     
     logger.info("Starting Execution Sandbox Service...")
     
@@ -359,6 +370,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize sandbox manager: {e}")
         # Don't raise - allow service to start without Docker
+    
+    # Initialize Kata executor if available
+    if kata_available:
+        try:
+            kata_executor = KataExecutor()
+            logger.info("Kata executor initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Kata executor: {e}")
+            kata_executor = None
+    else:
+        kata_executor = None
     
     yield
     
@@ -406,6 +428,45 @@ async def health_check():
 async def execute_code(request: ExecutionRequest):
     """Execute code in sandbox"""
     
+    # Check if Kata runtime is requested
+    if request.runtime == "kata":
+        if not kata_executor:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Kata executor not available"
+            )
+        
+        try:
+            # Execute using Kata Containers
+            result = await kata_executor.execute_code(
+                code=request.code,
+                language=request.language,
+                timeout=request.resource_limits.timeout if request.resource_limits else 30,
+                memory_limit=request.resource_limits.memory if request.resource_limits else "256Mi",
+                cpu_limit="100m"
+            )
+            
+            # Convert to ExecutionResult format
+            execution_result = ExecutionResult(
+                execution_id=result["execution_id"],
+                status=ExecutionStatus(result["status"]),
+                output=result.get("output"),
+                error=result.get("error"),
+                exit_code=result.get("exit_code"),
+                duration_ms=result.get("duration_ms"),
+                runtime=result.get("runtime", "kata")
+            )
+            
+            return JSONResponse(content=jsonable_encoder(execution_result))
+            
+        except Exception as e:
+            logger.error(f"Kata execution error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Kata execution failed: {str(e)}"
+            )
+    
+    # Default Docker execution
     if not sandbox_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

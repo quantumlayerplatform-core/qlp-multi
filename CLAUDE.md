@@ -8,9 +8,9 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
 
 **Core Concept**: Request → Orchestrator → Task Decomposition → Agent Execution → Validation → Capsule Creation → Delivery/GitHub
 
-**Current Status**: Core platform fully operational with enterprise features, GitHub integration, and intelligent capsule generation
+**Current Status**: Core platform operational with Temporal Cloud integration in progress for production deployment on Azure Kubernetes Service (AKS)
 
-**Latest Milestone** (July 15, 2025): 
+**Latest Milestone** (July 17, 2025): 
 - ✅ Complete end-to-end flow from NLP to GitHub repository
 - ✅ Enterprise-grade project structure generation using AI
 - ✅ Test-Driven Development (TDD) workflow integration
@@ -20,9 +20,13 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
 - ✅ AWS Bedrock integration for multi-model support
 - ✅ Enterprise scalability improvements (dynamic scaling, circuit breakers)
 - ✅ Enhanced fault tolerance and error handling
-- ✅ **NEW: Intelligent LLM-powered file organization** (no hardcoded assumptions)
-- ✅ **NEW: Intelligent CI/CD generation** (universal language support)
-- ✅ **NEW: GitHub Actions monitoring with auto-fix** (self-healing CI/CD)
+- ✅ Intelligent LLM-powered file organization (no hardcoded assumptions)
+- ✅ Intelligent CI/CD generation (universal language support)
+- ✅ GitHub Actions monitoring with auto-fix (self-healing CI/CD)
+- ✅ **NEW: Temporal Cloud integration** (API key authentication)
+- ✅ **NEW: Azure Container Registry** (multi-arch images)
+- ✅ **NEW: Application Gateway Ingress Controller** (production ingress)
+- 🔄 **IN PROGRESS: AKS deployment with Temporal Cloud**
 
 ## Technology Stack
 
@@ -33,11 +37,15 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
   - OpenAI, Anthropic, Groq
   - AWS Bedrock (Claude, Llama, Mistral)
   - LangChain, LlamaIndex
-- **Workflow Orchestration**: Temporal
+- **Workflow Orchestration**: Temporal Cloud (production), Temporal (local dev)
+  - Endpoint: us-west-2.aws.api.temporal.io:7233
+  - Namespace: qlp-beta.f6bob
 - **Vector Database**: Qdrant (primary), Weaviate (alternative)
-- **Traditional Databases**: PostgreSQL (with persistence), Redis
+- **Traditional Databases**: PostgreSQL (Supabase in production), Redis
 - **Message Queue**: Kafka (optional)
-- **Container Orchestration**: Docker, Kubernetes (AKS-ready)
+- **Container Orchestration**: Docker, Kubernetes (AKS)
+  - Azure Container Registry: qlpregistry.azurecr.io
+  - Application Gateway: 85.210.217.253
 - **Monitoring**: Prometheus, Grafana, Jaeger, OpenTelemetry
 - **Version Control**: GitHub API v3 integration
 
@@ -190,6 +198,66 @@ All services expose OpenAPI documentation at:
 - Validation Mesh: http://localhost:8002/docs
 - Vector Memory: http://localhost:8003/docs
 - Execution Sandbox: http://localhost:8004/docs
+
+## AKS Deployment & Temporal Cloud
+
+### Production Deployment (AKS)
+
+The platform is deployed to Azure Kubernetes Service (AKS) with Temporal Cloud integration:
+
+```bash
+# Deploy to AKS
+kubectl apply -f deployments/kubernetes/aks/temporal-cloud/
+
+# Check deployments
+kubectl get pods -n qlp-production
+
+# View logs
+kubectl logs -n qlp-production -l app=qlp-orchestrator -f
+kubectl logs -n qlp-production -l app=qlp-temporal-worker -f
+
+# Access via Application Gateway
+curl https://85.210.217.253/health
+```
+
+### Temporal Cloud Configuration
+
+Required environment variables for Temporal Cloud:
+```bash
+TEMPORAL_ADDRESS=us-west-2.aws.api.temporal.io:7233
+TEMPORAL_NAMESPACE=qlp-beta.f6bob
+TEMPORAL_CLOUD_API_KEY=<your-api-key>
+TEMPORAL_USE_API_KEY=true
+```
+
+### Building Multi-Arch Images
+
+```bash
+# Build and push to Azure Container Registry
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t qlpregistry.azurecr.io/qlp/orchestrator:latest \
+  -f deployments/docker/orchestrator.dockerfile \
+  --push .
+
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t qlpregistry.azurecr.io/qlp/temporal-worker:latest \
+  -f deployments/docker/temporal-worker.dockerfile \
+  --push .
+```
+
+### Known Issues with AKS Deployment
+
+1. **Redis Port Environment Variable Conflict**
+   - Kubernetes injects service discovery variables that conflict with REDIS_PORT
+   - Solution: Explicitly set `REDIS_PORT: "6379"` in deployment manifests
+
+2. **Temporal SDK Version**
+   - Temporal Cloud requires SDK 1.14.1+ for API key authentication
+   - Ensure requirements.txt has `temporalio>=1.14.1`
+
+3. **Import Restrictions in Temporal Workers**
+   - Move imports inside activity functions to avoid sandbox restrictions
+   - Affected imports: httpx, pathlib, urllib, psutil
 
 ## Common Development Commands
 
@@ -387,14 +455,21 @@ DATABASE_URL=postgresql://qlp_user:qlp_password@postgres:5432/qlp_db
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 
-# Services
+# Services (Local Development)
 TEMPORAL_SERVER=temporal:7233
 REDIS_URL=redis://redis:6379/0
 QDRANT_URL=http://qdrant:6333
 
+# Temporal Cloud (Production)
+TEMPORAL_ADDRESS=us-west-2.aws.api.temporal.io:7233
+TEMPORAL_NAMESPACE=qlp-beta.f6bob
+TEMPORAL_CLOUD_API_KEY=your-temporal-cloud-api-key
+TEMPORAL_USE_API_KEY=true
+TEMPORAL_TASK_QUEUE=qlp-production-queue
+
 # Feature Flags
 TDD_ENABLED=true
-AITL_ENABLED=true
+AITL_ENABLED=false  # Currently disabled due to overly conservative scoring
 ENTERPRISE_FEATURES_ENABLED=true
 ```
 

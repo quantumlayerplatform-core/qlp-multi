@@ -1,0 +1,294 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: execution-controller-code
+  namespace: qlp-production
+data:
+  controller.py: |
+    """
+    Production Universal Execution Controller
+    Dynamically creates pods with appropriate runtime classes
+    """
+    import asyncio
+    import json
+    import logging
+    from typing import Dict, Optional, Tuple
+    from kubernetes import client, config
+    from kubernetes.client import V1Pod, V1Container, V1PodSpec
+    import yaml
+    
+    class UniversalExecutionController:
+        def __init__(self):
+            # Load Kubernetes config
+            try:
+                config.load_incluster_config()
+            except:
+                config.load_kube_config()
+            
+            self.v1 = client.CoreV1Api()
+            self.batch_v1 = client.BatchV1Api()
+            
+            # Load runtime profiles
+            with open('/runtime-profiles/profiles.yaml', 'r') as f:
+                self.profiles = yaml.safe_load(f)['runtime_profiles']
+            
+            self.logger = logging.getLogger(__name__)
+        
+        async def execute_code(self, request: Dict) -> Dict:
+            """
+            Main entry point for code execution requests
+            """
+            # Analyze the request
+            analysis = self.analyze_request(request)
+            
+            # Select appropriate runtime
+            runtime_profile = self.select_runtime_profile(analysis)
+            
+            # Create execution pod
+            pod_name = f"exec-{request.get('request_id', 'unknown')[:8]}"
+            pod = self.create_execution_pod(
+                name=pod_name,
+                code=request['code'],
+                language=analysis['language'],
+                runtime_profile=runtime_profile
+            )
+            
+            try:
+                # Create the pod
+                self.v1.create_namespaced_pod(
+                    namespace='qlp-production',
+                    body=pod
+                )
+                
+                # Wait for completion
+                result = await self.wait_for_completion(pod_name)
+                
+                return {
+                    'status': 'success',
+                    'runtime_used': runtime_profile['runtime_class'],
+                    'execution_time': result['duration'],
+                    'output': result['output'],
+                    'metrics': result['metrics']
+                }
+                
+            except Exception as e:
+                self.logger.error(f"Execution failed: {e}")
+                return {
+                    'status': 'error',
+                    'error': str(e),
+                    'runtime_attempted': runtime_profile['runtime_class']
+                }
+            finally:
+                # Cleanup
+                self.cleanup_pod(pod_name)
+        
+        def analyze_request(self, request: Dict) -> Dict:
+            """
+            Analyzes code request to determine requirements
+            """
+            code = request.get('code', '')
+            language = request.get('language', self.detect_language(code))
+            
+            # Check for various indicators
+            analysis = {
+                'language': language,
+                'has_gpu_requirements': self._check_gpu_needs(code),
+                'has_system_calls': self._check_system_calls(code, language),
+                'is_long_running': self._estimate_duration(code) > 300,
+                'is_web_service': self._is_web_service(code),
+                'security_concerns': self._check_security_concerns(code),
+                'estimated_memory': self._estimate_memory(code, language),
+                'dependencies': self._extract_dependencies(code, language)
+            }
+            
+            return analysis
+        
+        def select_runtime_profile(self, analysis: Dict) -> Dict:
+            """
+            Selects the appropriate runtime profile based on analysis
+            """
+            # Priority-based selection
+            if analysis['has_gpu_requirements']:
+                return self.profiles['ml_workload']
+            elif analysis['is_web_service'] or analysis['is_long_running']:
+                return self.profiles['service_workload']
+            elif analysis['has_system_calls']:
+                return self.profiles['system_code']
+            elif analysis['security_concerns']:
+                return self.profiles['untrusted_code']
+            else:
+                return self.profiles['simple_script']
+        
+        def create_execution_pod(self, name: str, code: str, 
+                               language: str, runtime_profile: Dict) -> V1Pod:
+            """
+            Creates a Kubernetes pod spec for code execution
+            """
+            # Get language-specific settings
+            lang_config = self.profiles.get('language_defaults', {}).get(language, {})
+            
+            # Create container
+            container = V1Container(
+                name='executor',
+                image=lang_config.get('base_image', 'python:3.11-slim'),
+                command=self._get_execution_command(language, code),
+                resources=runtime_profile['resources'],
+                security_context=runtime_profile.get('security_context', {})
+            )
+            
+            # Create pod spec
+            pod_spec = V1PodSpec(
+                runtime_class_name=runtime_profile['runtime_class'],
+                containers=[container],
+                restart_policy='Never',
+                active_deadline_seconds=runtime_profile['timeout'],
+                node_selector=runtime_profile.get('node_selector', {})
+            )
+            
+            # Create pod
+            pod = V1Pod(
+                api_version='v1',
+                kind='Pod',
+                metadata=client.V1ObjectMeta(
+                    name=name,
+                    namespace='qlp-production',
+                    labels={
+                        'app': 'code-execution',
+                        'runtime': runtime_profile['runtime_class'],
+                        'language': language
+                    }
+                ),
+                spec=pod_spec
+            )
+            
+            return pod
+        
+        def _get_execution_command(self, language: str, code: str) -> list:
+            """
+            Returns the command to execute based on language
+            """
+            # Encode code as base64 to avoid shell escaping issues
+            import base64
+            encoded_code = base64.b64encode(code.encode()).decode()
+            
+            commands = {
+                'python': ['sh', '-c', f'echo {encoded_code} | base64 -d | python'],
+                'javascript': ['sh', '-c', f'echo {encoded_code} | base64 -d | node'],
+                'go': ['sh', '-c', f'echo {encoded_code} | base64 -d > main.go && go run main.go'],
+                'rust': ['sh', '-c', f'echo {encoded_code} | base64 -d > main.rs && rustc main.rs && ./main'],
+                'java': ['sh', '-c', f'echo {encoded_code} | base64 -d > Main.java && javac Main.java && java Main'],
+                'c': ['sh', '-c', f'echo {encoded_code} | base64 -d > main.c && gcc main.c && ./a.out'],
+                'cpp': ['sh', '-c', f'echo {encoded_code} | base64 -d > main.cpp && g++ main.cpp && ./a.out']
+            }
+            
+            return commands.get(language, commands['python'])
+        
+        async def wait_for_completion(self, pod_name: str, timeout: int = 300) -> Dict:
+            """
+            Waits for pod completion and retrieves results
+            """
+            start_time = asyncio.get_event_loop().time()
+            
+            while True:
+                # Check pod status
+                pod = self.v1.read_namespaced_pod(
+                    name=pod_name,
+                    namespace='qlp-production'
+                )
+                
+                if pod.status.phase in ['Succeeded', 'Failed']:
+                    # Get logs
+                    logs = self.v1.read_namespaced_pod_log(
+                        name=pod_name,
+                        namespace='qlp-production'
+                    )
+                    
+                    duration = asyncio.get_event_loop().time() - start_time
+                    
+                    return {
+                        'status': pod.status.phase,
+                        'output': logs,
+                        'duration': duration,
+                        'metrics': self._extract_metrics(pod)
+                    }
+                
+                if asyncio.get_event_loop().time() - start_time > timeout:
+                    raise TimeoutError(f"Pod {pod_name} timed out")
+                
+                await asyncio.sleep(1)
+        
+        def cleanup_pod(self, pod_name: str):
+            """
+            Deletes the execution pod
+            """
+            try:
+                self.v1.delete_namespaced_pod(
+                    name=pod_name,
+                    namespace='qlp-production'
+                )
+            except:
+                pass  # Pod might already be deleted
+        
+        # Helper methods for analysis
+        def detect_language(self, code: str) -> str:
+            # Simple language detection logic
+            if 'def ' in code or 'import ' in code:
+                return 'python'
+            elif 'function ' in code or 'const ' in code:
+                return 'javascript'
+            elif 'package main' in code:
+                return 'go'
+            elif 'fn main' in code:
+                return 'rust'
+            elif 'public class' in code:
+                return 'java'
+            else:
+                return 'python'  # Default
+        
+        def _check_gpu_needs(self, code: str) -> bool:
+            gpu_keywords = ['cuda', 'tensorflow', 'pytorch', 'torch', 'gpu']
+            return any(kw in code.lower() for kw in gpu_keywords)
+        
+        def _check_system_calls(self, code: str, language: str) -> bool:
+            if language == 'python':
+                return any(x in code for x in ['os.', 'subprocess', 'socket'])
+            return False
+        
+        def _estimate_duration(self, code: str) -> int:
+            if 'while True' in code:
+                return 3600
+            elif 'train' in code or 'fit' in code:
+                return 1800
+            return 60
+        
+        def _is_web_service(self, code: str) -> bool:
+            web_keywords = ['flask', 'fastapi', 'express', 'http.listen']
+            return any(kw in code.lower() for kw in web_keywords)
+        
+        def _check_security_concerns(self, code: str) -> bool:
+            dangerous = ['eval', 'exec', '__import__', 'compile']
+            return any(d in code for d in dangerous)
+        
+        def _estimate_memory(self, code: str, language: str) -> str:
+            if 'numpy' in code or 'pandas' in code:
+                return '1Gi'
+            elif language in ['java', 'scala']:
+                return '512Mi'
+            return '256Mi'
+        
+        def _extract_dependencies(self, code: str, language: str) -> list:
+            # Simple dependency extraction
+            deps = []
+            if language == 'python':
+                import re
+                imports = re.findall(r'import (\w+)', code)
+                deps.extend(imports)
+            return deps
+        
+        def _extract_metrics(self, pod: V1Pod) -> Dict:
+            # Extract resource usage metrics from pod
+            return {
+                'cpu_used': '0m',  # Would get from metrics API
+                'memory_used': '0Mi',  # Would get from metrics API
+                'runtime_class': pod.spec.runtime_class_name
+            }

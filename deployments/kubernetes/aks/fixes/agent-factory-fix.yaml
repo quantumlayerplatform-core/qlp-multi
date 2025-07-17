@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-factory-data-pvc
+  namespace: qlp-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-factory
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-factory
+  template:
+    metadata:
+      labels:
+        app: agent-factory
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      - name: init-directories
+        image: busybox:1.36
+        command: ['sh', '-c', 'mkdir -p /app/data/prompt_genomes && chmod -R 777 /app/data']
+        volumeMounts:
+        - name: data-volume
+          mountPath: /app/data
+      containers:
+      - name: agent-factory
+        image: qlpregistry.azurecr.io/qlp/agent-factory:latest
+        ports:
+        - containerPort: 8001
+        env:
+        - name: SERVICE_NAME
+          value: "agent-factory"
+        - name: PORT
+          value: "8001"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: data-volume
+          mountPath: /app/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: agent-factory-data-pvc

@@ -1,0 +1,320 @@
+version: '3.8'
+
+services:
+  # Core QLP Services using cloud databases but local Temporal
+  orchestrator:
+    container_name: qlp-orchestrator
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_NAME: orchestrator
+      PORT: 8000
+      # Supabase PostgreSQL connection
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      # Local Temporal
+      TEMPORAL_SERVER: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      # Qdrant Cloud
+      QDRANT_URL: ${QDRANT_CLOUD_URL}
+      QDRANT_API_KEY: ${QDRANT_CLOUD_API_KEY}
+      QDRANT_CLOUD_URL: ${QDRANT_CLOUD_URL}
+      # Redis remains local for now
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+      - ./logs:/app/logs
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - qlp-network
+
+  agent-factory:
+    container_name: qlp-agent-factory
+    build:
+      context: .
+      dockerfile: services/agents/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      SERVICE_NAME: agent-factory
+      PORT: 8001
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    user: root
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - qlp-network
+
+  validation-mesh:
+    container_name: qlp-validation-mesh
+    build:
+      context: .
+      dockerfile: services/validation/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      SERVICE_NAME: validation-mesh
+      PORT: 8002
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - qlp-network
+
+  vector-memory:
+    container_name: qlp-vector-memory
+    build:
+      context: .
+      dockerfile: services/memory/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      SERVICE_NAME: vector-memory
+      PORT: 8003
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      QDRANT_URL: ${QDRANT_CLOUD_URL}
+      QDRANT_API_KEY: ${QDRANT_CLOUD_API_KEY}
+      QDRANT_CLOUD_URL: ${QDRANT_CLOUD_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - qlp-network
+
+  execution-sandbox:
+    container_name: qlp-execution-sandbox
+    build:
+      context: .
+      dockerfile: services/sandbox/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      SERVICE_NAME: execution-sandbox
+      PORT: 8004
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - qlp-network
+
+  # Temporal Worker - connects to local Temporal
+  temporal-worker:
+    container_name: qlp-temporal-worker
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.temporal-worker
+    environment:
+      SERVICE_NAME: temporal-worker
+      TEMPORAL_SERVER: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    networks:
+      - qlp-network
+
+  marketing-worker:
+    container_name: qlp-marketing-worker
+    build:
+      context: .
+      dockerfile: services/marketing/Dockerfile
+    environment:
+      SERVICE_NAME: marketing-worker
+      TEMPORAL_SERVER: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./docker-entrypoint-cloud.sh:/app/docker-entrypoint.sh:ro
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    networks:
+      - qlp-network
+
+  # Keep these local for now
+  redis:
+    container_name: qlp-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - qlp-network
+
+  # Local Temporal until Cloud auth is fixed  
+  # Using local PostgreSQL just for Temporal
+  postgres:
+    image: postgres:14
+    container_name: qlp-postgres-temporal
+    environment:
+      POSTGRES_USER: qlp_user
+      POSTGRES_PASSWORD: qlp_password
+      POSTGRES_DB: qlp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qlp_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qlp-network
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: qlp-temporal
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=qlp_user
+      - POSTGRES_PWD=qlp_password
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - qlp-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z $(hostname -i) 7233 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  temporal-ui:
+    container_name: qlp-temporal-ui
+    image: temporalio/ui:2.30.3
+    ports:
+      - "8088:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_UI_PORT=8080
+    depends_on:
+      - temporal
+    networks:
+      - qlp-network
+
+  # NGINX remains for local routing
+  nginx:
+    container_name: qlp-nginx
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./deployments/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - orchestrator
+      - agent-factory
+      - validation-mesh
+      - vector-memory
+      - execution-sandbox
+    networks:
+      - qlp-network
+
+  # Cloud services being used:
+  # - Supabase (PostgreSQL) - ${SUPABASE_DATABASE_URL}
+  # - Qdrant Cloud - ${QDRANT_CLOUD_URL}
+  
+  # Local services:
+  # - Redis (can migrate to Redis Cloud later)
+  # - Temporal (until Cloud auth is fixed)
+
+networks:
+  qlp-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  temporal_postgres_data:

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-worker
+  template:
+    metadata:
+      labels:
+        app: temporal-worker
+    spec:
+      containers:
+      - name: temporal-worker
+        image: qlpregistry.azurecr.io/qlp/orchestrator:latest  # Use orchestrator image
+        command: ["python", "-m", "src.orchestrator.worker_production_db"]
+        env:
+        - name: SERVICE_NAME
+          value: "temporal-worker"
+        - name: WORKER_MODE
+          value: "true"
+        - name: TEMPORAL_SERVER
+          value: "temporal:7233"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"

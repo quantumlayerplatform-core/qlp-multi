@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-override
+  namespace: qlp-production
+data:
+  override.py: |
+    # Override Docker imports to use native execution
+    import sys
+    import types
+    
+    # Create a fake docker module
+    docker = types.ModuleType('docker')
+    docker.from_env = lambda: None
+    docker.errors = types.ModuleType('docker.errors')
+    docker.errors.DockerException = Exception
+    
+    sys.modules['docker'] = docker
+    sys.modules['docker.errors'] = docker.errors
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-mesh
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: validation-mesh
+  template:
+    metadata:
+      labels:
+        app: validation-mesh
+    spec:
+      initContainers:
+      - name: setup-override
+        image: busybox:1.36
+        command: ['sh', '-c', 'cp /config/override.py /app-override/']
+        volumeMounts:
+        - name: override-config
+          mountPath: /config
+        - name: override-volume
+          mountPath: /app-override
+      containers:
+      - name: validation-mesh
+        image: qlpregistry.azurecr.io/qlp/validation-mesh:latest
+        command: ["sh", "-c", "python /app-override/override.py && python -m src.validation.main"]
+        ports:
+        - containerPort: 8002
+        env:
+        - name: SERVICE_NAME
+          value: "validation-mesh"
+        - name: PORT
+          value: "8002"
+        - name: PYTHONPATH
+          value: "/app:/app-override"
+        - name: DISABLE_DOCKER
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - configMapRef:
+            name: validation-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: override-volume
+          mountPath: /app-override
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 20
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 40
+          periodSeconds: 10
+      volumes:
+      - name: override-config
+        configMap:
+          name: validation-override
+      - name: override-volume
+        emptyDir: {}

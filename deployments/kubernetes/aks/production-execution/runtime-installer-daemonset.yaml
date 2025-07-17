@@ -1,0 +1,175 @@
+# DaemonSet to install container runtimes on appropriate nodes
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: runtime-system
+---
+# ServiceAccount for runtime installer
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runtime-installer
+  namespace: runtime-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: runtime-installer
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: runtime-installer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: runtime-installer
+subjects:
+- kind: ServiceAccount
+  name: runtime-installer
+  namespace: runtime-system
+---
+# DaemonSet for Kata Containers installation
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-installer
+  namespace: runtime-system
+spec:
+  selector:
+    matchLabels:
+      name: kata-installer
+  template:
+    metadata:
+      labels:
+        name: kata-installer
+    spec:
+      serviceAccountName: runtime-installer
+      hostPID: true
+      hostNetwork: true
+      nodeSelector:
+        runtime: kata
+      tolerations:
+      - key: runtime
+        operator: Equal
+        value: kata
+        effect: NoSchedule
+      initContainers:
+      - name: kata-installer
+        image: katadocker/kata-deploy:latest
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: cri-runtime
+          mountPath: /etc/containerd
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Installing Kata Containers on node ${NODE_NAME}"
+          # Installation script for Kata
+          cp -r /opt/kata /host/opt/
+          # Configure containerd for Kata
+          cat >> /etc/containerd/config.toml <<EOF
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata]
+            runtime_type = "io.containerd.kata.v2"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata.options]
+              ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration.toml"
+          EOF
+          systemctl restart containerd
+      containers:
+      - name: pause
+        image: gcr.io/google_containers/pause:3.5
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: cri-runtime
+        hostPath:
+          path: /etc/containerd
+---
+# DaemonSet for gVisor installation
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gvisor-installer
+  namespace: runtime-system
+spec:
+  selector:
+    matchLabels:
+      name: gvisor-installer
+  template:
+    metadata:
+      labels:
+        name: gvisor-installer
+    spec:
+      serviceAccountName: runtime-installer
+      hostPID: true
+      hostNetwork: true
+      nodeSelector:
+        runtime: gvisor
+      tolerations:
+      - key: runtime
+        operator: Equal
+        value: gvisor
+        effect: NoSchedule
+      initContainers:
+      - name: gvisor-installer
+        image: gcr.io/gvisor/gvisor-installer:latest
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: cri-runtime
+          mountPath: /etc/containerd
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Installing gVisor on node ${NODE_NAME}"
+          # Install runsc
+          wget https://storage.googleapis.com/gvisor/releases/release/latest/x86_64/runsc
+          chmod +x runsc
+          mv runsc /host/usr/local/bin/
+          # Configure containerd for gVisor
+          cat >> /etc/containerd/config.toml <<EOF
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+            runtime_type = "io.containerd.runsc.v1"
+          EOF
+          systemctl restart containerd
+      containers:
+      - name: pause
+        image: gcr.io/google_containers/pause:3.5
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: cri-runtime
+        hostPath:
+          path: /etc/containerd

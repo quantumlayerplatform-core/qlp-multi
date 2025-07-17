@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qlp-config
+  namespace: qlp-production
+data:
+  # Service URLs
+  ORCHESTRATOR_URL: "http://orchestrator-svc:8000"
+  AGENT_FACTORY_URL: "http://agent-factory-svc:8001"
+  VALIDATION_MESH_URL: "http://validation-mesh-svc:8002"
+  VECTOR_MEMORY_URL: "http://vector-memory-svc:8003"
+  EXECUTION_SANDBOX_URL: "http://execution-sandbox-svc:8004"
+  
+  # Temporal Configuration
+  TEMPORAL_SERVER: "temporal:7233"
+  TEMPORAL_NAMESPACE: "default"
+  
+  # Redis Configuration
+  REDIS_URL: "redis://redis:6379/0"
+  
+  # Qdrant Configuration
+  QDRANT_URL: "http://qdrant:6333"
+  
+  # Feature Flags
+  TDD_ENABLED: "true"
+  AITL_ENABLED: "false"  # Disabled due to overly conservative scoring
+  ENTERPRISE_FEATURES_ENABLED: "true"
+  
+  # Environment
+  ENVIRONMENT: "production"
+  
+  # Override Kubernetes service discovery env vars
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  ORCHESTRATOR_HOST: "orchestrator-svc"
+  ORCHESTRATOR_PORT: "8000"
+  AGENT_FACTORY_HOST: "agent-factory-svc"
+  AGENT_FACTORY_PORT: "8001"
+  VALIDATION_MESH_HOST: "validation-mesh-svc"
+  VALIDATION_MESH_PORT: "8002"
+  VECTOR_MEMORY_HOST: "vector-memory-svc"
+  VECTOR_MEMORY_PORT: "8003"
+  EXECUTION_SANDBOX_HOST: "execution-sandbox-svc"
+  EXECUTION_SANDBOX_PORT: "8004"

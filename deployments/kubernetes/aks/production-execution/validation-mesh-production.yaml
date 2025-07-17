@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-overrides
+  namespace: qlp-production
+data:
+  override_docker.py: |
+    """
+    Override Docker dependencies for Kubernetes-based validation
+    """
+    import os
+    os.environ['DISABLE_DOCKER_VALIDATION'] = 'true'
+    os.environ['USE_KUBERNETES_EXECUTOR'] = 'true'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-mesh
+  namespace: qlp-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: validation-mesh
+  template:
+    metadata:
+      labels:
+        app: validation-mesh
+    spec:
+      serviceAccountName: validation-controller
+      initContainers:
+      - name: disable-docker
+        image: busybox:1.36
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Disabling Docker validation..."
+          echo 'DISABLE_DOCKER_VALIDATION=true' > /config/env
+          echo 'USE_STATIC_VALIDATION=true' >> /config/env
+          echo 'VALIDATION_BACKEND=kubernetes' >> /config/env
+        volumeMounts:
+        - name: config-override
+          mountPath: /config
+      containers:
+      - name: validation-mesh
+        image: qlpregistry.azurecr.io/qlp/validation-mesh:latest
+        command: ["sh", "-c"]
+        args:
+        - |
+          # Export environment overrides
+          export $(cat /config/env | xargs)
+          # Monkey-patch Docker imports before starting
+          python -c "
+          import sys
+          import types
+          docker = types.ModuleType('docker')
+          docker.from_env = lambda: None
+          docker.errors = types.ModuleType('docker.errors')
+          docker.errors.DockerException = Exception
+          sys.modules['docker'] = docker
+          sys.modules['docker.errors'] = docker.errors
+          "
+          # Start the service
+          python -m src.validation.main
+        ports:
+        - containerPort: 8002
+        env:
+        - name: SERVICE_NAME
+          value: "validation-mesh"
+        - name: PORT
+          value: "8002"
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        - name: DISABLE_DOCKER_VALIDATION
+          value: "true"
+        - name: USE_STATIC_VALIDATION
+          value: "true"
+        - name: VALIDATION_BACKEND
+          value: "kubernetes"
+        - name: EXECUTION_SERVICE_URL
+          value: "http://execution-sandbox-svc:8004"
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: config-override
+          mountPath: /config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          failureThreshold: 30
+          periodSeconds: 10
+          initialDelaySeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 60
+          periodSeconds: 10
+      volumes:
+      - name: config-override
+        emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: validation-controller
+  namespace: qlp-production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: validation-controller
+  namespace: qlp-production
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: validation-controller
+  namespace: qlp-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: validation-controller
+subjects:
+- kind: ServiceAccount
+  name: validation-controller
+  namespace: qlp-production

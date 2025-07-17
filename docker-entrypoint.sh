@@ -38,11 +38,26 @@ case "$SERVICE_NAME" in
         MODULE="src.validation.main:app"
         ;;
     vector-memory)
-        wait_for_service ${QDRANT_HOST:-qdrant} ${QDRANT_PORT:-6333} "Qdrant"
+        # Skip waiting for Qdrant when using Qdrant Cloud
+        if [[ -z "$QDRANT_CLOUD_URL" ]]; then
+            # Extract port number if QDRANT_PORT is a full URL
+            if [[ "$QDRANT_PORT" =~ ^tcp:// ]]; then
+                QDRANT_PORT_NUM=6333
+            else
+                QDRANT_PORT_NUM=${QDRANT_PORT:-6333}
+            fi
+            wait_for_service ${QDRANT_HOST:-qdrant} ${QDRANT_PORT_NUM} "Qdrant"
+        else
+            echo "Using Qdrant Cloud, skipping local Qdrant check"
+        fi
         PORT=${PORT:-8003}
         MODULE="src.memory.main:app"
         ;;
     execution-sandbox)
+        PORT=${PORT:-8004}
+        MODULE="src.sandbox.main:app"
+        ;;
+    universal-execution)
         PORT=${PORT:-8004}
         MODULE="src.sandbox.main:app"
         ;;

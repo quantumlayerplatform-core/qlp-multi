@@ -10,6 +10,7 @@ from temporalio import workflow, activity
 from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.common import RetryPolicy
+from src.common.temporal_cloud import get_temporal_client
 
 # Configure logging
 logging.basicConfig(
@@ -32,11 +33,11 @@ from src.orchestrator.marketing_workflow import (
     create_marketing_capsule
 )
 
-async def run_marketing_worker(temporal_host: str = "temporal:7233", task_queue: str = "marketing-queue"):
+async def run_marketing_worker(task_queue: str = "marketing-queue"):
     """Run the dedicated marketing worker"""
     
-    logger.info(f"Connecting to Temporal at: {temporal_host}")
-    client = await Client.connect(temporal_host)
+    # Connect to Temporal using the cloud-aware helper
+    client = await get_temporal_client()
     
     # Create worker with marketing workflows and activities
     worker = Worker(

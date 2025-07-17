@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  namespace: qlp-production
+  labels:
+    app: temporal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      containers:
+      - name: temporal
+        image: temporalio/auto-setup:1.24.2
+        ports:
+        - containerPort: 7233
+          name: grpc
+        - containerPort: 8088
+          name: web
+        env:
+        - name: DB
+          value: "postgres12"
+        - name: DB_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PWD
+          value: "nwGE5hunfncm57NU"
+        - name: POSTGRES_SEEDS
+          value: "db.piqrwahqrxuyfnzfoosq.supabase.co"
+        - name: DYNAMIC_CONFIG_FILE_PATH
+          value: "config/dynamicconfig/development-sql.yaml"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: qlp-production
+spec:
+  selector:
+    app: temporal
+  ports:
+  - port: 7233
+    targetPort: 7233
+    name: grpc
+  - port: 8088
+    targetPort: 8088
+    name: web
+  type: ClusterIP

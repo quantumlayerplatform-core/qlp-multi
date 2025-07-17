@@ -11,6 +11,7 @@ from temporalio import workflow, activity
 from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.common import RetryPolicy
+from src.common.temporal_cloud import get_temporal_client
 
 # Configure logging
 logging.basicConfig(
@@ -46,8 +47,7 @@ from src.orchestrator.worker_production import (
 
 # Import enhanced activities with enterprise heartbeat management
 from src.orchestrator.worker_production_enhanced import (
-    execute_task_activity_enhanced,
-    validate_result_activity_enhanced
+    execute_task_activity_enhanced
 )
 
 # Import marketing workflows and activities
@@ -81,15 +81,15 @@ async def execute_task_activity(task: Dict[str, Any], tier: str, request_id: str
 
 @activity.defn(name="validate_result_activity")
 async def validate_result_activity(result: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
-    """Wrapper for enhanced validate result activity"""
-    return await validate_result_activity_enhanced(result, task)
+    """Wrapper that uses the original validate result activity"""
+    return await original_validate_result_activity(result, task)
 
 
-async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "qlp-main"):
+async def run_worker(task_queue: str = "qlp-production-queue"):
     """Run the production worker with database persistence"""
     
-    # Connect to Temporal
-    client = await Client.connect(temporal_host)
+    # Connect to Temporal using the cloud-aware helper
+    client = await get_temporal_client()
     
     # Build workflows list
     workflows = [QLPWorkflow]
@@ -140,7 +140,7 @@ async def run_worker(temporal_host: str = "temporal:7233", task_queue: str = "ql
     )
     
     logger.info("Starting Production Temporal Worker with PostgreSQL persistence")
-    logger.info(f"Connected to Temporal at: {temporal_host}")
+    logger.info(f"Connected to Temporal Cloud")
     logger.info(f"Task queue: {task_queue}")
     logger.info("✅ Database persistence enabled for capsule storage")
     
@@ -153,17 +153,16 @@ def main():
     import os
     
     # Get configuration from environment
-    temporal_host = os.getenv("TEMPORAL_SERVER", "temporal:7233")
-    task_queue = os.getenv("TEMPORAL_TASK_QUEUE", "qlp-main")
+    task_queue = os.getenv("TEMPORAL_TASK_QUEUE", "qlp-production-queue")
     
     logger.info("=== Production Temporal Worker Starting ===")
-    logger.info(f"Temporal Server: {temporal_host}")
+    logger.info("Temporal: Using Cloud Configuration")
     logger.info(f"Task Queue: {task_queue}")
     logger.info("Database: PostgreSQL (qlp_db)")
     logger.info("=========================================")
     
     try:
-        asyncio.run(run_worker(temporal_host, task_queue))
+        asyncio.run(run_worker(task_queue))
     except KeyboardInterrupt:
         logger.info("Worker stopped by user")
     except Exception as e:

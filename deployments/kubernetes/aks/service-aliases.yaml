@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-memory
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: vector-memory-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-factory
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: agent-factory-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: validation-mesh
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: validation-mesh-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-sandbox
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: execution-sandbox-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-vector-memory
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: vector-memory-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-agent-factory
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: agent-factory-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-validation-mesh
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: validation-mesh-svc.qlp-production.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-execution-sandbox
+  namespace: qlp-production
+spec:
+  type: ExternalName
+  externalName: execution-sandbox-svc.qlp-production.svc.cluster.local

@@ -125,7 +125,7 @@ class UnifiedOptimizationEngine:
         )
         
         # Step 6: Calculate optimization metrics
-        computational_cost = sum(rec.computational_cost for rec in pattern_recommendations[:3])
+        computational_cost = sum(rec.computational_cost for rec in pattern_recommendations[:3]) if pattern_recommendations else 1.0
         expected_performance = self._calculate_expected_performance(
             selected_patterns, evolution_strategy, characteristics
         )
@@ -232,7 +232,28 @@ class UnifiedOptimizationEngine:
         
         pattern_names = [p.value for p in selected_patterns]
         
-        reasoning = f"""
+        # Handle empty patterns case
+        if not selected_patterns or not pattern_recommendations:
+            reasoning = f"""
+Unified Optimization Decision:
+
+Selected Patterns: Default (Abstraction)
+- No specific patterns matched, using default abstraction pattern
+- Pattern selection based on: {characteristics.complexity_level} complexity, {characteristics.domain} domain
+- Computational cost: 1.0 units
+
+Evolution Strategy: {evolution_strategy.value}
+- Chosen for {characteristics.complexity_level} complexity tasks
+- Optimized for {"high" if characteristics.ambiguity_level > 0.7 else "low"} ambiguity
+- {"Conflict resolution" if characteristics.conflicting_requirements else "Standard approach"} mode
+
+Expected Benefits:
+- Improved task decomposition quality
+- Optimized prompt evolution for agent tier
+- Reduced computational overhead through targeted pattern usage
+- Enhanced learning from execution feedback"""
+        else:
+            reasoning = f"""
 Unified Optimization Decision:
 
 Selected Patterns: {', '.join(pattern_names)}
@@ -311,7 +332,11 @@ Expected Benefits:
             self.performance_metrics[strategy_key]["failures"] += 1
         
         # Store learning feedback
-        feedback_key = f"{optimization_result.selected_patterns[0].value}_{optimization_result.evolution_strategy.value}"
+        if optimization_result.selected_patterns:
+            feedback_key = f"{optimization_result.selected_patterns[0].value}_{optimization_result.evolution_strategy.value}"
+        else:
+            feedback_key = f"default_{optimization_result.evolution_strategy.value}"
+        
         if feedback_key not in self.learning_feedback:
             self.learning_feedback[feedback_key] = []
         

@@ -309,8 +309,7 @@ class T0Agent(Agent):
             error_details = error_handler.handle_error(
                 e,
                 service="t0_agent",
-                context={"task_id": task.id, "agent_id": self.agent_id},
-                raise_after=False
+                context={"task_id": task.id, "agent_id": self.agent_id}
             )
             
             return TaskResult(

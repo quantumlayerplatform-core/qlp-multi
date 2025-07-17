@@ -1,0 +1,57 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qlp-ingress-prod
+  namespace: qlp-production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # Health check configuration
+    nginx.ingress.kubernetes.io/health-check-path: "/health"
+spec:
+  rules:
+  - http:
+      paths:
+      # Main orchestrator - all root paths
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: qlp-orchestrator
+            port:
+              number: 8000
+      # Agent Factory API
+      - path: /api/agents
+        pathType: Prefix
+        backend:
+          service:
+            name: agent-factory-svc
+            port:
+              number: 8001
+      # Validation Mesh API
+      - path: /api/validation
+        pathType: Prefix
+        backend:
+          service:
+            name: validation-mesh-svc
+            port:
+              number: 8002
+      # Vector Memory API
+      - path: /api/memory
+        pathType: Prefix
+        backend:
+          service:
+            name: vector-memory-svc
+            port:
+              number: 8003
+      # Execution Sandbox API
+      - path: /api/sandbox
+        pathType: Prefix
+        backend:
+          service:
+            name: execution-sandbox-svc
+            port:
+              number: 8004

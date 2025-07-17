@@ -435,6 +435,9 @@ async def _send_periodic_heartbeats(service_name: str, interval: int):
 
 async def call_validation_service(client: Any, validation_input: Dict[str, Any]) -> Any:
     """Call validation service with retry protection and heartbeats"""
+    import httpx
+    from ..common.config import settings
+    
     max_retries = 3
     retry_delay = 1
     

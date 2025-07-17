@@ -1,0 +1,205 @@
+---
+# Qdrant Vector Database for AKS
+# Using StatefulSet with Azure Disk for persistence
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: qlp-production
+  labels:
+    app: qdrant
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: qdrant
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-lb
+  namespace: qlp-production
+  labels:
+    app: qdrant
+spec:
+  type: ClusterIP
+  selector:
+    app: qdrant
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: qlp-production
+  labels:
+    app: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 3
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6333"
+        prometheus.io/path: "/metrics"
+    spec:
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "qlp"
+        effect: "NoSchedule"
+      nodeSelector:
+        workload: "qlp"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - qdrant
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.7.4
+        ports:
+        - containerPort: 6333
+          name: http
+        - containerPort: 6334
+          name: grpc
+        env:
+        - name: QDRANT__CLUSTER__ENABLED
+          value: "true"
+        - name: QDRANT__CLUSTER__P2P__PORT
+          value: "6335"
+        - name: QDRANT__SERVICE__HTTP_PORT
+          value: "6333"
+        - name: QDRANT__SERVICE__GRPC_PORT
+          value: "6334"
+        - name: QDRANT__STORAGE__STORAGE_PATH
+          value: "/qdrant/storage"
+        - name: QDRANT__STORAGE__SNAPSHOTS_PATH
+          value: "/qdrant/snapshots"
+        - name: QDRANT__LOG_LEVEL
+          value: "INFO"
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: qdrant-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "managed-premium"
+      resources:
+        requests:
+          storage: 100Gi
+---
+# ConfigMap for Qdrant initialization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qdrant-init
+  namespace: qlp-production
+data:
+  init-collections.sh: |
+    #!/bin/bash
+    set -e
+    
+    # Wait for Qdrant to be ready
+    until curl -f http://localhost:6333/collections; do
+      echo "Waiting for Qdrant to be ready..."
+      sleep 5
+    done
+    
+    # Create QLQ vectors collection
+    curl -X PUT http://localhost:6333/collections/qlp_vectors \
+      -H "Content-Type: application/json" \
+      -d '{
+        "vectors": {
+          "size": 1536,
+          "distance": "Cosine"
+        },
+        "optimizers_config": {
+          "default_segment_number": 2,
+          "indexing_threshold": 20000,
+          "flush_interval_sec": 5,
+          "max_segment_size": 200000,
+          "memmap_threshold": 50000,
+          "max_optimization_threads": 2
+        },
+        "wal_config": {
+          "wal_capacity_mb": 32,
+          "wal_segments_ahead": 0
+        },
+        "replication_factor": 2,
+        "write_consistency_factor": 2
+      }'
+    
+    echo "Qdrant collections initialized successfully!"
+---
+# Job to initialize Qdrant collections
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qdrant-init-job
+  namespace: qlp-production
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: curlimages/curl:8.5.0
+        command: ["/bin/sh"]
+        args: ["/scripts/init-collections.sh"]
+        volumeMounts:
+        - name: init-script
+          mountPath: /scripts
+      volumes:
+      - name: init-script
+        configMap:
+          name: qdrant-init
+          defaultMode: 0755

@@ -1,0 +1,73 @@
+---
+# Service Account for QLP services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qlp-service-account
+  namespace: qlp-production
+  annotations:
+    azure.workload.identity/client-id: "${AZURE_CLIENT_ID}"
+  labels:
+    azure.workload.identity/use: "true"
+---
+# Role for QLP services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qlp-service-role
+  namespace: qlp-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# RoleBinding for QLP services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qlp-service-rolebinding
+  namespace: qlp-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: qlp-service-role
+subjects:
+- kind: ServiceAccount
+  name: qlp-service-account
+  namespace: qlp-production
+---
+# ClusterRole for cross-namespace operations (if needed)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qlp-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: qlp-cluster-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: qlp-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: qlp-service-account
+  namespace: qlp-production

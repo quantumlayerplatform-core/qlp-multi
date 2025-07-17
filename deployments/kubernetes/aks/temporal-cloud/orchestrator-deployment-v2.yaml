@@ -1,0 +1,182 @@
+# Orchestrator Service with Temporal Cloud and Data Volume
+# Version: v2 - Adds persistent data volume for prompt genomes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qlp-orchestrator
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qlp-orchestrator
+  template:
+    metadata:
+      labels:
+        app: qlp-orchestrator
+        version: v2
+    spec:
+      # Init container to create directories with proper permissions
+      initContainers:
+      - name: init-directories
+        image: busybox:latest
+        command: ['sh', '-c', 'mkdir -p /app/data/prompt_genomes && chmod -R 777 /app/data']
+        volumeMounts:
+        - name: app-data
+          mountPath: /app/data
+      containers:
+      - name: orchestrator
+        image: qlpregistry.azurecr.io/qlp/orchestrator:temporal-cloud-v1
+        ports:
+        - containerPort: 8000
+        env:
+        # Temporal Cloud Configuration
+        - name: TEMPORAL_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+        - name: TEMPORAL_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_ADDRESS
+        - name: TEMPORAL_NAMESPACE
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_NAMESPACE
+        - name: TEMPORAL_CLOUD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_API_KEY
+        - name: TEMPORAL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_API_KEY
+        - name: TEMPORAL_USE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: temporal-cloud-credentials
+              key: TEMPORAL_USE_API_KEY
+        # Task Queue from ConfigMap
+        - name: TEMPORAL_TASK_QUEUE
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-cloud-config
+              key: TEMPORAL_TASK_QUEUE
+        # Database Configuration
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: DATABASE_URL
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: qlp-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        # Service URLs
+        - name: AGENT_FACTORY_URL
+          value: "http://qlp-agent-factory:8001"
+        - name: VALIDATION_MESH_URL
+          value: "http://qlp-validation-mesh:8002"
+        - name: VECTOR_MEMORY_URL
+          value: "http://qlp-vector-memory:8003"
+        - name: SANDBOX_SERVICE_URL
+          value: "http://qlp-execution-sandbox:8004"
+        # Redis - Override K8s service discovery injection
+        - name: REDIS_URL
+          value: "redis://qlp-redis:6379/0"
+        - name: REDIS_PORT
+          value: "6379"
+        # Azure OpenAI
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: azure-openai-secret
+              key: AZURE_OPENAI_ENDPOINT
+        - name: AZURE_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-openai-secret
+              key: AZURE_OPENAI_API_KEY
+        - name: AZURE_OPENAI_DEPLOYMENT_NAME
+          valueFrom:
+            secretKeyRef:
+              name: azure-openai-secret
+              key: AZURE_OPENAI_DEPLOYMENT_NAME
+        # GitHub Configuration
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-secret
+              key: GITHUB_TOKEN
+        # OpenAI
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-secret
+              key: OPENAI_API_KEY
+              optional: true
+        # Anthropic
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-secret
+              key: ANTHROPIC_API_KEY
+              optional: true
+        # Application Settings
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: ENTERPRISE_FEATURES_ENABLED
+          value: "true"
+        - name: TDD_ENABLED
+          value: "true"
+        - name: AITL_ENABLED
+          value: "false"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "50m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: app-data
+          mountPath: /app/data
+      volumes:
+      - name: app-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlp-orchestrator
+  namespace: qlp-production
+spec:
+  selector:
+    app: qlp-orchestrator
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP

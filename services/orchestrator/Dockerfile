@@ -35,6 +35,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY --chown=qlp:qlp . .
 
+# Create data directory for prompt genomes
+RUN mkdir -p /app/data/prompt_genomes && chown -R qlp:qlp /app/data
+
 # Switch to non-root user
 USER qlp
 

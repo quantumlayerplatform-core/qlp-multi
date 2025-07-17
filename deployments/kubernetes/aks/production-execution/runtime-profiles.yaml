@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: runtime-profiles
+  namespace: qlp-production
+data:
+  profiles.yaml: |
+    # Runtime profiles for different code execution scenarios
+    runtime_profiles:
+      # Simple scripts - fastest, least isolated
+      simple_script:
+        runtime_class: native
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        timeout: 30
+        suitable_for:
+          - hello_world
+          - simple_calculations
+          - data_transformations
+          - api_responses
+      
+      # Untrusted code - balanced security
+      untrusted_code:
+        runtime_class: gvisor
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        timeout: 120
+        security_context:
+          runAsNonRoot: true
+          runAsUser: 65534
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        suitable_for:
+          - user_submitted_code
+          - competition_solutions
+          - educational_exercises
+      
+      # System programming - VM isolation
+      system_code:
+        runtime_class: kata
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        timeout: 300
+        suitable_for:
+          - kernel_modules
+          - system_utilities
+          - low_level_programming
+          - hardware_interaction
+      
+      # Long-running services - microVM
+      service_workload:
+        runtime_class: firecracker
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "4000m"
+        timeout: 3600
+        suitable_for:
+          - web_servers
+          - microservices
+          - background_workers
+          - stateful_applications
+      
+      # Machine learning - GPU + isolation
+      ml_workload:
+        runtime_class: kata
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: 1
+        timeout: 7200
+        node_selector:
+          accelerator: nvidia-tesla-v100
+        suitable_for:
+          - model_training
+          - deep_learning
+          - gpu_computing
+          - data_science
+    
+    # Language-specific defaults
+    language_defaults:
+      python:
+        preferred_runtime: gvisor
+        base_image: "python:3.11-slim"
+        init_commands:
+          - "pip install --no-cache-dir numpy pandas"
+      
+      javascript:
+        preferred_runtime: native
+        base_image: "node:18-alpine"
+        init_commands:
+          - "npm install --production"
+      
+      go:
+        preferred_runtime: gvisor
+        base_image: "golang:1.21-alpine"
+        build_required: true
+      
+      rust:
+        preferred_runtime: kata
+        base_image: "rust:1.70-slim"
+        build_required: true
+      
+      java:
+        preferred_runtime: gvisor
+        base_image: "openjdk:17-slim"
+        jvm_args: "-Xmx512m -XX:+UseG1GC"
+      
+      c_cpp:
+        preferred_runtime: kata
+        base_image: "gcc:12"
+        build_required: true
+        security_level: high

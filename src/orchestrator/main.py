@@ -22,6 +22,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.client import WorkflowHandle
 # from temporalio.exceptions import WorkflowNotFoundError  # Not available in this version
+from src.common.temporal_cloud import get_temporal_client as get_temporal_client_cloud
 import structlog
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
@@ -71,13 +72,10 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Initialize shared resources at startup"""
-    logger.info(f"🚀 Starting up orchestrator, connecting to Temporal at {settings.TEMPORAL_SERVER}")
+    logger.info("🚀 Starting up orchestrator, connecting to Temporal")
     try:
-        app.state.temporal_client = await Client.connect(
-            settings.TEMPORAL_SERVER,
-            namespace=settings.TEMPORAL_NAMESPACE
-        )
-        logger.info(f"✅ Connected to Temporal at {settings.TEMPORAL_SERVER}")
+        app.state.temporal_client = await get_temporal_client_cloud()
+        logger.info("✅ Connected to Temporal successfully")
     except Exception as e:
         logger.error(f"❌ Failed to connect to Temporal: {e}")
         # Don't raise, allow app to start but log the error
@@ -1576,7 +1574,7 @@ async def execute_request(request: ExecutionRequest):
                 categories=hap_result.categories
             )
         # Initialize Temporal client
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         
         # Start workflow
         handle = await temporal_client.start_workflow(
@@ -1592,7 +1590,7 @@ async def execute_request(request: ExecutionRequest):
                 "tier_override": request.tier_override  # Pass tier override to workflow
             },
             id=f"qlp-execution-{request.id}",
-            task_queue="qlp-main"
+            task_queue=settings.TEMPORAL_TASK_QUEUE
         )
         
         return {
@@ -1610,7 +1608,7 @@ async def execute_request(request: ExecutionRequest):
 async def get_status(workflow_id: str):
     """Get workflow execution status"""
     try:
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         handle = temporal_client.get_workflow_handle(workflow_id)
         
         description = await handle.describe()
@@ -1631,7 +1629,7 @@ async def get_status(workflow_id: str):
 async def approve_execution(workflow_id: str):
     """Approve a workflow execution plan"""
     try:
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         handle = temporal_client.get_workflow_handle(workflow_id)
         
         await handle.signal("human_approval", True)
@@ -1707,7 +1705,7 @@ async def test_temporal_marketing():
         logger.info(f"Testing Temporal - has_client: {has_client}, client_exists: {client_exists}")
         
         # Try creating a new client for this test
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         
         # Try to start a simple marketing workflow
         from src.orchestrator.marketing_workflow import MarketingWorkflowRequest, MarketingWorkflow
@@ -1764,7 +1762,7 @@ async def get_workflow_status(workflow_id: str):
         - workflow_id: The workflow ID
     """
     try:
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         handle = temporal_client.get_workflow_handle(workflow_id)
         
         # Get workflow description
@@ -2944,14 +2942,14 @@ async def generate_complete_with_github(request: GitHubExecutionRequest):
         }
         
         # Initialize Temporal client
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         
         # Start workflow
         handle = await temporal_client.start_workflow(
             "QLPWorkflow",
             workflow_request,
             id=f"qlp-github-{workflow_request['request_id']}",
-            task_queue="qlp-main"
+            task_queue=settings.TEMPORAL_TASK_QUEUE
         )
         
         # Return immediately with workflow info
@@ -2994,14 +2992,14 @@ async def generate_complete_with_github_sync(request: GitHubExecutionRequest):
         }
         
         # Initialize Temporal client
-        temporal_client = await Client.connect(settings.TEMPORAL_SERVER)
+        temporal_client = await get_temporal_client_cloud()
         
         # Start workflow
         handle = await temporal_client.start_workflow(
             "QLPWorkflow",
             workflow_request,
             id=f"qlp-github-{workflow_request['request_id']}",
-            task_queue="qlp-main"
+            task_queue=settings.TEMPORAL_TASK_QUEUE
         )
         
         # Wait for completion with shorter timeout
@@ -4557,7 +4555,7 @@ async def reset_optimization_learning():
 # Worker setup
 async def run_worker():
     """Run Temporal worker"""
-    client = await Client.connect(settings.TEMPORAL_SERVER)
+    client = await get_temporal_client_cloud()
     
     worker = Worker(
         client,

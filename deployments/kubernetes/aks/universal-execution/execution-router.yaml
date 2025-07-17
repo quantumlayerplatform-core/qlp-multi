@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: execution-router-config
+  namespace: qlp-production
+data:
+  router_config.yaml: |
+    execution_backends:
+      # Native sandboxed execution (fastest, least isolated)
+      native:
+        supported_languages: ["python", "javascript", "ruby"]
+        max_execution_time: 30
+        memory_limit: "512Mi"
+        use_cases:
+          - simple_scripts
+          - data_processing
+          - api_endpoints
+      
+      # WebAssembly (portable, secure)
+      wasm:
+        supported_languages: ["rust", "go", "c", "c++", "python"]
+        max_execution_time: 60
+        memory_limit: "256Mi"
+        use_cases:
+          - untrusted_code
+          - browser_compatible
+          - edge_computing
+      
+      # gVisor (balanced isolation)
+      gvisor:
+        supported_languages: ["*"]  # All languages
+        max_execution_time: 300
+        memory_limit: "2Gi"
+        use_cases:
+          - system_programming
+          - file_operations
+          - network_services
+      
+      # Kata Containers (strong isolation)
+      kata:
+        supported_languages: ["*"]
+        max_execution_time: 600
+        memory_limit: "4Gi"
+        use_cases:
+          - gpu_computing
+          - kernel_modules
+          - privileged_operations
+      
+      # Firecracker (microVMs)
+      firecracker:
+        supported_languages: ["*"]
+        max_execution_time: 3600
+        memory_limit: "8Gi"
+        use_cases:
+          - long_running_services
+          - full_applications
+          - container_workloads
+    
+    # Decision matrix
+    selection_rules:
+      - if: "language in ['python', 'javascript'] and execution_time < 30"
+        then: "native"
+      
+      - if: "requires_gpu == true"
+        then: "kata"
+      
+      - if: "untrusted_source == true"
+        then: "wasm"
+      
+      - if: "requires_docker == true"
+        then: "firecracker"
+      
+      - if: "requires_system_access == true"
+        then: "gvisor"
+      
+      - default: "native"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-router
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: execution-router
+  template:
+    metadata:
+      labels:
+        app: execution-router
+    spec:
+      serviceAccountName: execution-router-sa
+      containers:
+      - name: router
+        image: qlpregistry.azurecr.io/qlp/execution-router:latest
+        ports:
+        - containerPort: 8005
+        env:
+        - name: SERVICE_NAME
+          value: "execution-router"
+        - name: PORT
+          value: "8005"
+        volumeMounts:
+        - name: router-config
+          mountPath: /config
+        - name: runtime-sockets
+          mountPath: /var/run
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: router-config
+        configMap:
+          name: execution-router-config
+      - name: runtime-sockets
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-router-svc
+  namespace: qlp-production
+spec:
+  selector:
+    app: execution-router
+  ports:
+  - port: 8005
+    targetPort: 8005
+  type: ClusterIP

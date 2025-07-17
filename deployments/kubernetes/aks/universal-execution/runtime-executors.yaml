@@ -1,0 +1,152 @@
+# Native Python/JS Executor (No Docker needed)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: native-executor
+  namespace: qlp-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: native-executor
+  template:
+    metadata:
+      labels:
+        app: native-executor
+    spec:
+      containers:
+      - name: executor
+        image: qlpregistry.azurecr.io/qlp/native-executor:latest
+        ports:
+        - containerPort: 8010
+        env:
+        - name: EXECUTOR_TYPE
+          value: "native"
+        - name: SUPPORTED_LANGUAGES
+          value: "python,javascript,typescript,ruby"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: workspace
+          mountPath: /workspace
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: workspace
+        emptyDir: {}
+---
+# WebAssembly Executor
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wasm-executor
+  namespace: qlp-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wasm-executor
+  template:
+    metadata:
+      labels:
+        app: wasm-executor
+    spec:
+      containers:
+      - name: executor
+        image: qlpregistry.azurecr.io/qlp/wasm-executor:latest
+        ports:
+        - containerPort: 8011
+        env:
+        - name: EXECUTOR_TYPE
+          value: "wasm"
+        - name: WASM_RUNTIME
+          value: "wasmtime"  # or wasmer, lucet
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+# gVisor Executor (if AKS supports it)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gvisor-executor
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gvisor-executor
+  template:
+    metadata:
+      labels:
+        app: gvisor-executor
+      annotations:
+        io.kubernetes.cri.untrusted-workload: "true"
+    spec:
+      runtimeClassName: gvisor  # Requires gVisor runtime class
+      containers:
+      - name: executor
+        image: qlpregistry.azurecr.io/qlp/gvisor-executor:latest
+        ports:
+        - containerPort: 8012
+        env:
+        - name: EXECUTOR_TYPE
+          value: "gvisor"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+---
+# Kata Containers Executor (requires special nodes)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kata-executor
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kata-executor
+  template:
+    metadata:
+      labels:
+        app: kata-executor
+    spec:
+      runtimeClassName: kata-containers  # Requires Kata runtime
+      nodeSelector:
+        agentpool: kata  # Requires nodes with Kata support
+      containers:
+      - name: executor
+        image: qlpregistry.azurecr.io/qlp/kata-executor:latest
+        ports:
+        - containerPort: 8013
+        env:
+        - name: EXECUTOR_TYPE
+          value: "kata"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"

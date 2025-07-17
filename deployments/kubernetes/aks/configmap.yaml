@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qlp-config
+  namespace: qlp-production
+data:
+  # Service URLs - using Kubernetes service discovery
+  ORCHESTRATOR_URL: "http://orchestrator:8000"
+  AGENT_FACTORY_URL: "http://agent-factory:8001"
+  VALIDATION_MESH_URL: "http://validation-mesh:8002"
+  VECTOR_MEMORY_URL: "http://vector-memory:8003"
+  EXECUTION_SANDBOX_URL: "http://execution-sandbox:8004"
+  
+  # Service Ports
+  ORCHESTRATOR_PORT: "8000"
+  AGENT_FACTORY_PORT: "8001"
+  VALIDATION_MESH_PORT: "8002"
+  VECTOR_MEMORY_PORT: "8003"
+  EXECUTION_SANDBOX_PORT: "8004"
+  
+  # Temporal Configuration
+  TEMPORAL_SERVER: "temporal:7233"
+  TEMPORAL_NAMESPACE: "default"
+  
+  # Redis Configuration (using Azure Redis Cache)
+  REDIS_HOST: "will-be-replaced-by-terraform"
+  REDIS_PORT: "6380"
+  REDIS_SSL: "true"
+  
+  # Qdrant Configuration
+  QDRANT_URL: "http://qdrant:6333"
+  QDRANT_COLLECTION_NAME: "qlp_vectors"
+  
+  # Azure OpenAI Configuration
+  AZURE_OPENAI_API_VERSION: "2024-02-15-preview"
+  AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4"
+  
+  # Application Configuration
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
+  
+  # Feature Flags
+  TDD_ENABLED: "true"
+  AITL_ENABLED: "true"
+  ENTERPRISE_FEATURES_ENABLED: "true"
+  
+  # Performance Configuration
+  WORKFLOW_MAX_BATCH_SIZE: "50"
+  WORKFLOW_MAX_CONCURRENT_ACTIVITIES: "100"
+  WORKFLOW_MAX_CONCURRENT_WORKFLOWS: "50"
+  SERVICE_CALL_TIMEOUT: "600"
+  
+  # Monitoring
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:4317"
+  PROMETHEUS_ENDPOINT: "http://prometheus-server:9090"

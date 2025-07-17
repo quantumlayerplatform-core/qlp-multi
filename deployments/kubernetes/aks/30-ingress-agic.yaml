@@ -1,0 +1,76 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qlp-ingress
+  namespace: qlp-production
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/health-probe-path: "/health"
+    appgw.ingress.kubernetes.io/health-probe-status-codes: "200-499"
+    appgw.ingress.kubernetes.io/request-timeout: "600"
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestrator-svc
+            port:
+              number: 8000
+      - path: /api/agents
+        pathType: Prefix
+        backend:
+          service:
+            name: agent-factory-svc
+            port:
+              number: 8001
+      - path: /api/validation
+        pathType: Prefix
+        backend:
+          service:
+            name: validation-mesh-svc
+            port:
+              number: 8002
+      - path: /api/memory
+        pathType: Prefix
+        backend:
+          service:
+            name: vector-memory-svc
+            port:
+              number: 8003
+      - path: /api/sandbox
+        pathType: Prefix
+        backend:
+          service:
+            name: execution-sandbox-svc
+            port:
+              number: 8004
+---
+# For testing with domain names later
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qlp-ingress-with-host
+  namespace: qlp-production
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/health-probe-path: "/health"
+    appgw.ingress.kubernetes.io/health-probe-status-codes: "200-499"
+    appgw.ingress.kubernetes.io/request-timeout: "600"
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+    appgw.ingress.kubernetes.io/use-private-ip: "false"
+spec:
+  rules:
+  - host: qlp.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestrator-svc
+            port:
+              number: 8000

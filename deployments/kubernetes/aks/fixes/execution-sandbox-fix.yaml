@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: execution-sandbox-workspace-pvc
+  namespace: qlp-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-sandbox
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: execution-sandbox
+  template:
+    metadata:
+      labels:
+        app: execution-sandbox
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: execution-sandbox
+        image: qlpregistry.azurecr.io/qlp/execution-sandbox:latest
+        ports:
+        - containerPort: 8004
+        env:
+        - name: SERVICE_NAME
+          value: "execution-sandbox"
+        - name: PORT
+          value: "8004"
+        - name: ENABLE_DOCKER
+          value: "false"  # Disable Docker requirement
+        - name: EXECUTION_MODE
+          value: "local"  # Use local execution instead of Docker
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          privileged: false  # Don't need privileged mode without Docker
+          runAsUser: 1000
+          runAsGroup: 1000
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: execution-sandbox-workspace-pvc

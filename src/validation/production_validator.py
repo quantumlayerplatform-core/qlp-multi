@@ -579,14 +579,13 @@ class ProductionCodeValidator:
         
         try:
             # Execute in sandbox
-            execution_result = await self.sandbox_client.execute_code(
+            execution_result = await self.sandbox_client.execute(
                 code=code,
                 language=language,
-                tests=tests,
-                timeout=30
+                runtime="kata"  # Use Kata Containers for secure validation
             )
             
-            if execution_result.get("status") == "success":
+            if execution_result.success:
                 checks.append(ValidationCheck(
                     name="Runtime Execution",
                     type="runtime",
@@ -598,7 +597,7 @@ class ProductionCodeValidator:
                 issues.append(ValidationIssue(
                     category="runtime",
                     severity=ValidationSeverity.CRITICAL,
-                    message=f"Runtime error: {execution_result.get('error', 'Unknown error')}",
+                    message=f"Runtime error: {execution_result.error or 'Unknown error'}",
                     suggestion="Fix runtime execution issues"
                 ))
                 
@@ -606,7 +605,7 @@ class ProductionCodeValidator:
                     name="Runtime Execution",
                     type="runtime",
                     status=ValidationStatus.FAILED,
-                    message=f"Execution failed: {execution_result.get('error', 'Unknown')}",
+                    message=f"Execution failed: {execution_result.error or 'Unknown'}",
                     severity="critical"
                 ))
             

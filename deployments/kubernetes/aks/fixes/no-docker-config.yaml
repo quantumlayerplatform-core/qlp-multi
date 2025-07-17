@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: execution-config
+  namespace: qlp-production
+data:
+  EXECUTION_BACKEND: "native"  # Options: native, kata, gvisor, firecracker
+  ENABLE_SANDBOXING: "true"
+  SANDBOX_MEMORY_LIMIT: "512Mi"
+  SANDBOX_CPU_LIMIT: "500m"
+  SANDBOX_TIMEOUT: "30"
+  ALLOWED_LANGUAGES: "python,javascript,go,java"
+  
+  # Python execution settings
+  PYTHON_SANDBOX_MODULES: "json,math,datetime,collections,itertools,functools"
+  PYTHON_RESTRICTED_IMPORTS: "os,sys,subprocess,socket,requests"
+  
+  # Security settings
+  ENABLE_NETWORK_ISOLATION: "true"
+  ENABLE_FILESYSTEM_ISOLATION: "true"
+  TEMP_DIR_PREFIX: "/tmp/sandbox-"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-config
+  namespace: qlp-production
+data:
+  VALIDATION_BACKEND: "static"  # Options: static, runtime, hybrid
+  ENABLE_SYNTAX_CHECK: "true"
+  ENABLE_LINT_CHECK: "true"
+  ENABLE_SECURITY_SCAN: "true"
+  ENABLE_DEPENDENCY_CHECK: "true"
+  
+  # Skip Docker-based validation
+  SKIP_CONTAINER_VALIDATION: "true"
+  SKIP_RUNTIME_TESTS: "false"  # Use native execution for tests

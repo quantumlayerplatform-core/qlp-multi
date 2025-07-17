@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-mesh
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: validation-mesh
+  template:
+    metadata:
+      labels:
+        app: validation-mesh
+    spec:
+      containers:
+      - name: validation-mesh
+        image: qlpregistry.azurecr.io/qlp/validation-mesh:latest
+        ports:
+        - containerPort: 8002
+        env:
+        - name: SERVICE_NAME
+          value: "validation-mesh"
+        - name: PORT
+          value: "8002"
+        - name: ENABLE_DOCKER_VALIDATION
+          value: "false"  # Disable Docker-based validation
+        - name: VALIDATION_MODE
+          value: "static"  # Use static analysis only
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 10

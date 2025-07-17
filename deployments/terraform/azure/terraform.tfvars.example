@@ -1,0 +1,47 @@
+# Azure region (UK South for London)
+location = "uksouth"
+
+# Resource naming
+resource_group_name = "qlp-production"
+environment         = "production"
+project_name        = "qlp"
+
+# AKS Configuration
+aks_node_count = 3
+aks_min_nodes  = 3
+aks_max_nodes  = 10
+aks_node_size  = "Standard_D4s_v3"
+kubernetes_version = "1.29.2"
+
+# Database Configuration
+postgres_admin_username = "qlpadmin"
+postgres_admin_password = "CHANGE_ME_TO_SECURE_PASSWORD"  # Use Azure Key Vault in production
+postgres_sku           = "GP_Standard_D2s_v3"
+
+# Cosmos DB Configuration
+cosmos_consistency_level = "Session"
+
+# Service Bus Configuration
+service_bus_sku = "Standard"  # Use "Premium" for production with zone redundancy
+
+# Application Insights
+enable_application_insights = true
+
+# Monitoring and Alerts
+ops_email         = "ops@yourcompany.com"
+slack_webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Domain for ingress
+domain = "yourdomain.com"
+
+# GitHub token for ACR Tasks (optional)
+github_token = "ghp_YOUR_GITHUB_TOKEN"
+
+# Tags
+tags = {
+  Project     = "QuantumLayerPlatform"
+  Environment = "Production"
+  ManagedBy   = "Terraform"
+  CostCenter  = "Engineering"
+  Owner       = "Platform Team"
+}

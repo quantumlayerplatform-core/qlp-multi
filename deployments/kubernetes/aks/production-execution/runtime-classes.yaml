@@ -1,0 +1,56 @@
+# Production RuntimeClasses for different isolation levels
+---
+# Default runtime (standard containers)
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: native
+handler: runc
+scheduling:
+  nodeSelector:
+    runtime: standard
+---
+# gVisor for enhanced security
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    runtime: gvisor
+  tolerations:
+  - key: runtime
+    operator: Equal
+    value: gvisor
+    effect: NoSchedule
+---
+# Kata Containers for VM-level isolation
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata
+handler: kata
+scheduling:
+  nodeSelector:
+    runtime: kata
+  tolerations:
+  - key: runtime
+    operator: Equal
+    value: kata
+    effect: NoSchedule
+---
+# Firecracker for microVM workloads
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: firecracker
+handler: firecracker
+scheduling:
+  nodeSelector:
+    runtime: firecracker
+  tolerations:
+  - key: runtime
+    operator: Equal
+    value: firecracker
+    effect: NoSchedule

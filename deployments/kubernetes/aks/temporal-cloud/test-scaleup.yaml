@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-scaleup
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-scaleup
+  template:
+    metadata:
+      labels:
+        app: test-scaleup
+    spec:
+      containers:
+      - name: test
+        image: nginx:alpine
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "100m"
+          limits:
+            memory: "200Mi"
+            cpu: "200m"

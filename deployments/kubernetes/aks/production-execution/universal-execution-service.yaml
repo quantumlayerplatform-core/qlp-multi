@@ -1,0 +1,130 @@
+# The Production Universal Execution Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: universal-execution-svc
+  namespace: qlp-production
+spec:
+  selector:
+    app: universal-execution
+  ports:
+  - name: http
+    port: 8004
+    targetPort: 8004
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: universal-execution
+  namespace: qlp-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: universal-execution
+  template:
+    metadata:
+      labels:
+        app: universal-execution
+    spec:
+      serviceAccountName: execution-controller
+      containers:
+      - name: execution-controller
+        image: qlpregistry.azurecr.io/qlp/execution-sandbox:latest
+        ports:
+        - containerPort: 8004
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: SERVICE_NAME
+          value: "universal-execution"
+        - name: PORT
+          value: "8004"
+        - name: EXECUTION_MODE
+          value: "production"
+        - name: ENABLE_RUNTIME_SELECTION
+          value: "true"
+        - name: SUPPORTED_RUNTIMES
+          value: "native,gvisor,kata,firecracker"
+        - name: DEFAULT_RUNTIME
+          value: "gvisor"  # Secure by default
+        envFrom:
+        - configMapRef:
+            name: qlp-config
+        - secretRef:
+            name: qlp-secrets
+        volumeMounts:
+        - name: execution-config
+          mountPath: /config
+        - name: runtime-profiles
+          mountPath: /runtime-profiles
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8004
+          initialDelaySeconds: 20
+          periodSeconds: 5
+      nodeSelector:
+        agentpool: system
+      volumes:
+      - name: execution-config
+        configMap:
+          name: execution-config
+      - name: runtime-profiles
+        configMap:
+          name: runtime-profiles
+---
+# ServiceAccount with permissions to create pods with different runtime classes
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: execution-controller
+  namespace: qlp-production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: execution-controller
+  namespace: qlp-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec"]
+  verbs: ["create", "get", "list", "watch", "delete", "patch"]
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: execution-controller
+  namespace: qlp-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: execution-controller
+subjects:
+- kind: ServiceAccount
+  name: execution-controller
+  namespace: qlp-production

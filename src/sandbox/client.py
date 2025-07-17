@@ -15,19 +15,24 @@ class SandboxServiceClient:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=300.0)
     
-    async def execute(self, code: str, language: str, inputs: Optional[Dict[str, Any]] = None, **kwargs) -> ExecutionResult:
+    async def execute(self, code: str, language: str, inputs: Optional[Dict[str, Any]] = None, 
+                      runtime: str = "docker", **kwargs) -> ExecutionResult:
         """Execute code in sandbox
         
-        Note: **kwargs is used to catch and ignore any extra parameters like 'timeout'
-        that might be passed by legacy code
+        Args:
+            code: Code to execute
+            language: Programming language
+            inputs: Optional input data
+            runtime: Execution runtime ('docker' or 'kata')
+            **kwargs: Extra parameters for compatibility
         """
-        # Ignore any extra kwargs like timeout
         response = await self.client.post(
             f"{self.base_url}/execute",
             json={
                 "code": code,
                 "language": language,
-                "inputs": inputs or {}
+                "inputs": inputs or {},
+                "runtime": runtime
             }
         )
         response.raise_for_status()

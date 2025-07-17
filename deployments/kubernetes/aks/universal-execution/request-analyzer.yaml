@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: request-analyzer
+  namespace: qlp-production
+data:
+  analyzer.py: |
+    import re
+    import ast
+    from typing import Dict, List, Tuple
+    
+    class UniversalRequestAnalyzer:
+        """Analyzes code requests to determine optimal execution backend"""
+        
+        def analyze_request(self, request: Dict) -> Dict:
+            """
+            Analyzes incoming request and returns execution requirements
+            """
+            code = request.get('code', '')
+            language = request.get('language') or self.detect_language(code)
+            
+            analysis = {
+                'language': language,
+                'requires_gpu': self.check_gpu_requirements(code, language),
+                'requires_docker': self.check_docker_requirements(code),
+                'requires_system_access': self.check_system_access(code, language),
+                'execution_time_estimate': self.estimate_execution_time(code),
+                'memory_estimate': self.estimate_memory_usage(code, language),
+                'security_level': self.assess_security_level(code),
+                'dependencies': self.extract_dependencies(code, language),
+                'is_web_service': self.is_web_service(code, language),
+                'is_data_science': self.is_data_science_workload(code, language),
+                'recommended_backend': None  # Set by router
+            }
+            
+            return analysis
+        
+        def detect_language(self, code: str) -> str:
+            """Detects programming language from code"""
+            # Language detection patterns
+            patterns = {
+                'python': [r'def\s+\w+\s*\(', r'import\s+\w+', r'print\s*\('],
+                'javascript': [r'function\s+\w+', r'const\s+\w+', r'=>', r'console\.log'],
+                'go': [r'package\s+\w+', r'func\s+\w+', r':='],
+                'rust': [r'fn\s+\w+', r'let\s+mut', r'impl\s+'],
+                'java': [r'public\s+class', r'public\s+static\s+void\s+main'],
+                'c++': [r'#include\s*<', r'using\s+namespace', r'int\s+main\s*\('],
+                'ruby': [r'def\s+\w+', r'end\s*$', r'puts\s+'],
+                'typescript': [r'interface\s+\w+', r'type\s+\w+', r':\s*\w+\[\]'],
+            }
+            
+            for lang, lang_patterns in patterns.items():
+                if any(re.search(p, code, re.MULTILINE) for p in lang_patterns):
+                    return lang
+            
+            return 'unknown'
+        
+        def check_gpu_requirements(self, code: str, language: str) -> bool:
+            """Checks if code requires GPU"""
+            gpu_indicators = [
+                'cuda', 'tensorflow', 'pytorch', 'torch', 'gpu',
+                'nvidia', 'opencl', 'cudnn', 'rocm'
+            ]
+            code_lower = code.lower()
+            return any(indicator in code_lower for indicator in gpu_indicators)
+        
+        def check_docker_requirements(self, code: str) -> bool:
+            """Checks if code requires Docker"""
+            docker_indicators = [
+                'dockerfile', 'docker', 'container', 'docker-compose',
+                'FROM ', 'RUN ', 'CMD ', 'EXPOSE '
+            ]
+            return any(indicator in code for indicator in docker_indicators)
+        
+        def check_system_access(self, code: str, language: str) -> bool:
+            """Checks if code needs system-level access"""
+            if language == 'python':
+                dangerous_modules = ['os', 'subprocess', 'socket', 'ctypes']
+                return any(f'import {mod}' in code for mod in dangerous_modules)
+            elif language in ['javascript', 'typescript']:
+                return 'require("child_process")' in code or 'spawn' in code
+            elif language == 'go':
+                return 'syscall' in code or 'unsafe' in code
+            return False
+        
+        def estimate_execution_time(self, code: str) -> int:
+            """Estimates execution time in seconds"""
+            # Look for loops, recursion, etc.
+            if 'while True' in code or 'for i in range(1000000)' in code:
+                return 300  # 5 minutes
+            elif any(x in code for x in ['train', 'fit', 'model']):
+                return 600  # 10 minutes for ML
+            else:
+                return 30  # 30 seconds default
+        
+        def estimate_memory_usage(self, code: str, language: str) -> str:
+            """Estimates memory usage"""
+            if any(x in code.lower() for x in ['dataframe', 'numpy', 'torch', 'tensorflow']):
+                return "2Gi"
+            elif language in ['java', 'scala']:
+                return "1Gi"
+            else:
+                return "512Mi"
+        
+        def assess_security_level(self, code: str) -> str:
+            """Assesses security requirements"""
+            if self.check_system_access(code, self.detect_language(code)):
+                return "high"
+            elif 'eval' in code or 'exec' in code:
+                return "critical"
+            else:
+                return "standard"
+        
+        def extract_dependencies(self, code: str, language: str) -> List[str]:
+            """Extracts dependencies from code"""
+            deps = []
+            if language == 'python':
+                import_pattern = r'(?:import|from)\s+(\w+)'
+                deps = re.findall(import_pattern, code)
+            elif language in ['javascript', 'typescript']:
+                import_pattern = r'(?:import|require)\s*\(?["\']([^"\']+)["\']'
+                deps = re.findall(import_pattern, code)
+            return list(set(deps))
+        
+        def is_web_service(self, code: str, language: str) -> bool:
+            """Checks if code is a web service"""
+            web_indicators = [
+                'flask', 'django', 'fastapi', 'express', 'http',
+                'server', 'app.listen', 'gin', 'echo', 'actix'
+            ]
+            code_lower = code.lower()
+            return any(indicator in code_lower for indicator in web_indicators)
+        
+        def is_data_science_workload(self, code: str, language: str) -> bool:
+            """Checks if code is data science related"""
+            ds_indicators = [
+                'pandas', 'numpy', 'scikit', 'matplotlib', 'seaborn',
+                'tensorflow', 'pytorch', 'keras', 'jupyter'
+            ]
+            code_lower = code.lower()
+            return any(indicator in code_lower for indicator in ds_indicators)

@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qlp-ingress
+  namespace: qlp-production
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestrator-svc
+            port:
+              number: 8000
+---
+# For now, expose Orchestrator with LoadBalancer service
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator-lb
+  namespace: qlp-production
+spec:
+  selector:
+    app: orchestrator
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: LoadBalancer
