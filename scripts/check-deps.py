@@ -27,7 +27,7 @@ deps_to_check = [
     ("bs4", "beautifulsoup4==4.12.2"),
     ("litellm", "litellm==1.10.0"),
     ("semantic_kernel", "semantic-kernel==0.4.3.dev0"),
-    ("autogen", "pyautogen==0.2.2"),
+    ("autogen", "ag2==0.2.2"),
     ("crewai", "crewai==0.1.30")
 ]
 
