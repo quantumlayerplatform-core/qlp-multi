@@ -10,6 +10,91 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
 
 **Current Status**: Core platform operational with Temporal Cloud integration in progress for production deployment on Azure Kubernetes Service (AKS)
 
+## High-Level Architecture
+
+The platform consists of 5 microservices orchestrated through Temporal workflows:
+
+1. **Meta-Orchestrator (Port 8000)**: Central API gateway and workflow orchestration hub. All client requests enter here. Manages Temporal workflows and coordinates service interactions.
+
+2. **Agent Factory (Port 8001)**: Multi-tier LLM agent system that routes tasks to appropriate models (GPT-4, Claude, Llama) based on complexity. Implements specialized agents for different development tasks.
+
+3. **Validation Mesh (Port 8002)**: 6-stage validation pipeline ensuring code quality through syntax, style, security, type, and runtime checks. Uses ensemble consensus for critical decisions.
+
+4. **Vector Memory (Port 8003)**: Semantic search and learning system using Qdrant. Stores code patterns, learns from past generations, and provides context for new requests.
+
+5. **Execution Sandbox (Port 8004)**: Docker-based secure execution environment for multi-language code testing. Provides resource isolation and safe runtime validation.
+
+**Key Architectural Patterns**:
+- Event-driven through Temporal workflows (not traditional pub/sub)
+- Service mesh communication with REST APIs
+- Shared PostgreSQL for persistent storage
+- Redis for caching and session management
+- AI-first decision making (no hardcoded templates)
+
+## Critical Commands Reference
+
+### Build & Run
+```bash
+# ALWAYS activate virtual environment first
+source venv/bin/activate
+
+# Quick start with Docker (recommended)
+docker-compose -f docker-compose.platform.yml up -d
+
+# Local development start
+./start_all.sh
+
+# Build Docker images
+./scripts/build-images.sh
+```
+
+### Test
+```bash
+# Run a single test
+pytest tests/unit/test_specific.py::test_function -v
+
+# Run all unit tests with coverage
+pytest tests/unit -v --cov=src --cov-report=html
+
+# Run integration tests
+pytest tests/integration -v
+
+# Test complete flow
+./test_complete_flow.sh
+python test_enterprise_generation.py
+```
+
+### Debug & Troubleshoot
+```bash
+# Check service health
+curl http://localhost:8000/health
+
+# View logs
+docker logs qlp-orchestrator -f
+docker-compose -f docker-compose.platform.yml logs -f
+
+# Clean stuck workflows
+./scripts/cleanup_temporal.sh
+
+# Kill processes on ports (if stuck)
+./cleanup_all.sh
+```
+
+### Code Quality
+```bash
+# Format code
+black src/
+
+# Lint
+ruff check src/
+
+# Type check
+mypy src/
+
+# All quality checks
+make lint
+```
+
 **Latest Milestone** (July 17, 2025): 
 - ✅ Complete end-to-end flow from NLP to GitHub repository
 - ✅ Enterprise-grade project structure generation using AI
@@ -258,6 +343,60 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 3. **Import Restrictions in Temporal Workers**
    - Move imports inside activity functions to avoid sandbox restrictions
    - Affected imports: httpx, pathlib, urllib, psutil
+
+## Key Implementation Patterns
+
+### Temporal Workflow Pattern
+The platform's core workflow (`src/orchestrator/worker_production.py`) follows this pattern:
+1. **Request Analysis**: NLP analysis and task decomposition
+2. **Agent Assignment**: Tasks distributed to specialized agents
+3. **Parallel Execution**: Multiple agents work concurrently
+4. **Validation Pipeline**: Each output validated through 6 stages
+5. **Capsule Assembly**: Validated components assembled into deliverable
+6. **Delivery**: Push to GitHub or package for download
+
+### Agent Hierarchy
+- **T0 Agents**: Simple tasks (comments, documentation)
+- **T1 Agents**: Standard code generation (functions, classes)
+- **T2 Agents**: Complex logic (APIs, services)
+- **T3 Agents**: Architecture and system design
+
+### Important Files for Understanding the System
+- `src/orchestrator/worker_production.py`: Main workflow implementation
+- `src/orchestrator/main.py`: All API endpoints
+- `src/common/models.py`: Data models shared across services
+- `src/agents/multi_tier_agents.py`: Agent implementation
+- `src/orchestrator/intelligent_capsule_generator.py`: AI-driven project generation
+
+### Common Pitfalls & Solutions
+
+#### Temporal Sandbox Restrictions
+```python
+# ❌ WRONG - Import at module level
+import httpx
+
+@activity.defn
+async def my_activity():
+    # Use httpx
+
+# ✅ CORRECT - Import inside activity
+@activity.defn
+async def my_activity():
+    import httpx  # Import here to avoid sandbox restrictions
+    # Use httpx
+```
+
+#### Environment Variables in Workflows
+```python
+# ❌ WRONG in workflow
+import os
+api_key = os.getenv("API_KEY")
+
+# ✅ CORRECT - Pass as activity parameter
+@activity.defn
+async def my_activity(api_key: str):
+    # Use api_key
+```
 
 ## Common Development Commands
 
@@ -803,61 +942,39 @@ For detailed troubleshooting:
 
 Remember: The platform is designed to be self-healing and includes extensive error handling. Most issues can be resolved by restarting services or cleaning up stuck workflows.
 
-## Current State (July 15, 2025) - Session Summary
+## Future Improvements & Known Limitations
 
-### What Was Accomplished
-1. **Problem Identified**: AITL/HITL systems were blocking valid code generation due to overly conservative confidence scoring
-2. **Initial Fix**: Disabled AITL to allow code generation to proceed
-3. **Major Enhancement**: Replaced ALL hardcoded logic with intelligent LLM-powered systems:
-   - File organization now uses AI for universal language support
-   - CI/CD generation detects language and creates appropriate pipelines
-   - GitHub Actions monitoring provides self-healing CI/CD
-4. **Integration Complete**: All new features properly integrated into Temporal workflows
-5. **Testing Verified**: Successfully tested end-to-end flow with factorial function example
-6. **Production Ready**: Changes committed and pushed to remote repository
-
-### Key Technical Achievements
-- Fixed Temporal workflow sandbox restrictions (os.getenv issue)
-- Properly registered new activities in Docker worker (worker_production_db.py)
-- Cleaned up LLM response formatting (markdown code blocks)
-- Implemented fallback mechanisms for GitHub token handling
-- Created truly universal language support with zero hardcoded assumptions
-
-### Current Capabilities
-The platform now supports:
-- ANY programming language (Python, Go, JavaScript, Java, Rust, C++, etc.)
-- Intelligent project structure based on language conventions
-- Self-healing CI/CD pipelines that fix themselves
-- Real-time monitoring and auto-correction of build failures
-- Enterprise-grade code organization without templates
-
-## Future Improvements
-
-Based on current analysis, these areas need attention:
+### Areas Needing Attention
 
 1. **AITL System Tuning**
-   - Adjust confidence thresholds for warnings vs errors
-   - Implement warning tolerance levels
-   - Add configuration for strictness levels
+   - Currently disabled due to overly conservative confidence scoring
+   - Needs adjusted thresholds for warnings vs errors
+   - TODO: Implement configurable strictness levels
 
 2. **Performance Optimization**
    - Implement request batching for LLM calls
    - Add caching for repeated patterns
-   - Optimize database queries
+   - Optimize database queries for large capsules
 
 3. **Enhanced Monitoring**
-   - Add distributed tracing
+   - Add distributed tracing with OpenTelemetry
    - Implement SLO/SLA tracking
-   - Create performance dashboards
+   - Create Grafana dashboards for intelligent features
 
-4. **Workflow Improvements**
-   - Add workflow versioning
+4. **Production Readiness**
+   - Complete AKS deployment with Temporal Cloud
    - Implement blue-green deployments
    - Add canary testing for new models
 
-5. **Next Session Starting Points**
-   - Re-enable AITL with adjusted thresholds
-   - Test with complex multi-service projects
-   - Implement caching for intelligent decisions
-   - Add metrics for LLM-powered components
-   - Create dashboards for monitoring intelligent features
+## Summary
+
+The Quantum Layer Platform is a sophisticated AI-powered code generation system that transforms natural language into production-ready software. When working with this codebase:
+
+1. **Always use Docker Compose** for consistent development environment
+2. **Activate virtual environment** before running local services
+3. **Check service health** before testing features
+4. **Follow Temporal patterns** - imports inside activities, no file I/O in workflows
+5. **Use structured logging** for better debugging
+6. **Run tests frequently** - the platform has comprehensive test coverage
+
+The platform is actively developed with a focus on enterprise-grade features, universal language support, and self-healing capabilities. All code generation is AI-driven with no hardcoded templates, making it adaptable to any programming language or framework.

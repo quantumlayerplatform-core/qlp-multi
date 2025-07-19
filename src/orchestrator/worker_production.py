@@ -1305,7 +1305,43 @@ async def create_ql_capsule_activity(
         
         if execution_data.get("status") == "completed":
             output = execution_data.get("output", {})
+            output_type = execution_data.get("output_type", "")
             
+            # Handle T3's meta_execution output format
+            if output_type == "meta_execution" and isinstance(output, dict):
+                # T3 outputs have sub_agent_results with the actual code
+                sub_results = output.get("sub_agent_results", [])
+                synthesized = output.get("synthesized_output", {})
+                
+                # Process sub-agent results
+                for j, sub_result in enumerate(sub_results):
+                    if sub_result.get("output", {}).get("code"):
+                        sub_code = sub_result["output"]["code"]
+                        sub_language = sub_result["output"].get("language", "python")
+                        
+                        # Add the code with a descriptive filename
+                        if task.get('type') == 'test_creation':
+                            tests[f"test_{task.get('task_id', i)}_{j}.{sub_language}"] = sub_code
+                        else:
+                            source_code[f"{task.get('task_id', f'code_{i}')}_{j}.{sub_language}"] = sub_code
+                
+                # Also check synthesized output
+                if synthesized.get("code"):
+                    syn_code = synthesized["code"]
+                    syn_language = synthesized.get("language", "python")
+                    
+                    # For the main synthesized code, use the shared context main file name
+                    if len(source_code) == 0 and task.get('type') != 'test_creation':
+                        source_code[shared_context.file_structure.main_file_name] = syn_code
+                    elif task.get('type') == 'test_creation':
+                        tests[f"test_{task.get('task_id', i)}_synthesized.{syn_language}"] = syn_code
+                    else:
+                        source_code[f"{task.get('task_id', f'code_{i}')}_synthesized.{syn_language}"] = syn_code
+                
+                # Continue to next task since we handled T3 output
+                continue
+            
+            # Handle standard output format
             if isinstance(output, dict):
                 code = output.get("code", output.get("content", ""))
                 actual_language = output.get("language", "python")
