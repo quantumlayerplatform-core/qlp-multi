@@ -72,6 +72,8 @@ except ImportError as e:
 
 # Import the database-enabled capsule activity as well
 from src.orchestrator.activities.capsule_activities import create_ql_capsule_activity_with_db
+# Import enterprise capsule activity
+from src.orchestrator.enterprise_capsule_activity import create_enterprise_capsule_activity
 
 # Create wrapper activities with the correct names
 @activity.defn(name="execute_task_activity")
@@ -105,6 +107,7 @@ async def run_worker(task_queue: str = "qlp-production-queue"):
         llm_clean_code_activity,
         create_ql_capsule_activity,  # Original activity from worker_production
         create_ql_capsule_activity_with_db,  # Database-enabled version
+        create_enterprise_capsule_activity,  # Enterprise capsule activity
         prepare_delivery_activity,  # Delivery preparation activity
         push_to_github_activity,  # GitHub push activity
         monitor_github_actions_activity,  # GitHub Actions monitoring

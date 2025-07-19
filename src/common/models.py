@@ -76,6 +76,7 @@ class ExecutionRequest(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     tier_override: Optional[str] = None  # Force specific agent tier (T0, T1, T2, T3)
     tier_overrides: Optional[Dict[str, str]] = None  # Per-task-type tier overrides
+    use_enterprise_capsule: bool = False  # Use enterprise-grade capsule generation
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 

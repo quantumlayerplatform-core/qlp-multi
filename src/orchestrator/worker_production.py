@@ -2200,12 +2200,26 @@ class QLPWorkflow:
                             }
                         })
                 
-                capsule_result = await workflow.execute_activity(
-                    create_ql_capsule_activity,
-                    args=[request["request_id"], tasks, ordered_results, shared_context_dict],
-                    start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,  # Use longer timeout for capsule creation
-                    retry_policy=DEFAULT_RETRY_POLICY
-                )
+                # Check if enterprise capsule generation is requested
+                workflow.logger.info(f"Checking enterprise capsule flag: {request.get('use_enterprise_capsule', False)}")
+                workflow.logger.info(f"Full request keys: {list(request.keys())}")
+                if request.get("use_enterprise_capsule", False):
+                    workflow.logger.info("Using enterprise capsule generation")
+                    # Import activity dynamically to avoid Temporal restrictions
+                    from .enterprise_capsule_activity import create_enterprise_capsule_activity
+                    capsule_result = await workflow.execute_activity(
+                        create_enterprise_capsule_activity,
+                        args=[request["request_id"], tasks, ordered_results, shared_context_dict],
+                        start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,  # Use longer timeout for capsule creation
+                        retry_policy=DEFAULT_RETRY_POLICY
+                    )
+                else:
+                    capsule_result = await workflow.execute_activity(
+                        create_ql_capsule_activity,
+                        args=[request["request_id"], tasks, ordered_results, shared_context_dict],
+                        start_to_close_timeout=LONG_ACTIVITY_TIMEOUT,  # Use longer timeout for capsule creation
+                        retry_policy=DEFAULT_RETRY_POLICY
+                    )
                 
                 workflow_result["capsule_id"] = capsule_result.get("capsule_id")
                 workflow_result["metadata"]["capsule_info"] = capsule_result
@@ -3064,6 +3078,15 @@ async def start_worker():
         marketing_available = False
         logger.warning(f"Marketing workflows not available: {e}")
     
+    # Import enterprise capsule activity with try/except to handle import errors
+    try:
+        from .enterprise_capsule_activity import create_enterprise_capsule_activity
+        enterprise_capsule_available = True
+    except Exception as e:
+        logger.warning(f"Enterprise capsule activity not available: {e}")
+        enterprise_capsule_available = False
+        create_enterprise_capsule_activity = None
+    
     # Build workflows and activities lists
     workflows = [QLPWorkflow]
     activities = [
@@ -3082,6 +3105,10 @@ async def start_worker():
         load_workflow_checkpoint_activity,  # Add checkpoint loading activity
         stream_workflow_results_activity  # Add workflow streaming activity
     ]
+    
+    # Add enterprise capsule activity if available
+    if enterprise_capsule_available and create_enterprise_capsule_activity:
+        activities.append(create_enterprise_capsule_activity)
     
     # Add marketing workflows and activities if available
     if marketing_available:

@@ -1621,6 +1621,103 @@ async def execute_request(request: ExecutionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/execute/enterprise")
+async def execute_enterprise_request(request: ExecutionRequest):
+    """
+    Submit a new execution request with enterprise-grade capsule generation.
+    
+    This endpoint automatically enables:
+    - Enterprise capsule generation with comprehensive documentation
+    - Best practices configurations (linting, CI/CD, Docker)
+    - Multi-file project structure with proper organization
+    - Production-ready deployment configurations
+    
+    All parameters are the same as /execute, but use_enterprise_capsule is automatically set to True.
+    """
+    try:
+        # Force enterprise capsule generation
+        request.use_enterprise_capsule = True
+        
+        # Log enterprise request
+        logger.info(
+            "Enterprise execution request received",
+            request_id=request.id,
+            user_id=request.user_id,
+            description=request.description[:100]
+        )
+        
+        # HAP Content Check
+        from src.moderation import check_content, CheckContext, Severity
+        
+        hap_result = await check_content(
+            content=f"{request.description} {request.requirements or ''}",
+            context=CheckContext.USER_REQUEST,
+            user_id=request.user_id,
+            tenant_id=request.tenant_id
+        )
+        
+        # Use configurable threshold for request blocking
+        blocking_threshold = getattr(Severity, settings.HAP_REQUEST_BLOCKING_THRESHOLD, Severity.HIGH)
+        if hap_result.severity >= blocking_threshold:
+            logger.warning(
+                "Enterprise request blocked by HAP",
+                user_id=request.user_id,
+                severity=hap_result.severity,
+                categories=hap_result.categories,
+                blocking_threshold=blocking_threshold.value
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Content policy violation",
+                    "detail": hap_result.explanation,
+                    "suggestions": hap_result.suggestions,
+                    "severity": hap_result.severity.value,
+                    "threshold": blocking_threshold.value
+                }
+            )
+        
+        # Initialize Temporal client
+        temporal_client = await get_temporal_client_cloud()
+        
+        # Start workflow with enterprise flag
+        handle = await temporal_client.start_workflow(
+            "QLPWorkflow",
+            {
+                "request_id": request.id,
+                "description": request.description,
+                "tenant_id": request.tenant_id,
+                "user_id": request.user_id,
+                "requirements": request.requirements,
+                "constraints": request.constraints,
+                "metadata": request.metadata,
+                "tier_override": request.tier_override,
+                "use_enterprise_capsule": True  # Force enterprise capsule
+            },
+            id=f"qlp-enterprise-{request.id}",
+            task_queue=settings.TEMPORAL_TASK_QUEUE
+        )
+        
+        return JSONResponse(
+            content=jsonable_encoder({
+                "workflow_id": handle.id,
+                "status": "submitted",
+                "message": "Enterprise execution workflow started successfully",
+                "features": {
+                    "enterprise_capsule": True,
+                    "comprehensive_docs": True,
+                    "ci_cd_pipelines": True,
+                    "docker_support": True,
+                    "best_practices": True
+                }
+            })
+        )
+        
+    except Exception as e:
+        logger.error("Failed to start enterprise execution", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/status/{workflow_id}")
 async def get_status(workflow_id: str):
     """Get workflow execution status"""

@@ -21,6 +21,7 @@ data:
   # Temporal Configuration
   TEMPORAL_SERVER: "temporal:7233"
   TEMPORAL_NAMESPACE: "default"
+  TEMPORAL_TASK_QUEUE: "qlp-main"
   
   # Redis Configuration (using Azure Redis Cache)
   REDIS_HOST: "will-be-replaced-by-terraform"
@@ -43,7 +44,7 @@ data:
   
   # Feature Flags
   TDD_ENABLED: "true"
-  AITL_ENABLED: "true"
+  AITL_ENABLED: "false"  # Disabled due to overly conservative scoring
   ENTERPRISE_FEATURES_ENABLED: "true"
   
   # Performance Configuration

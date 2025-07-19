@@ -35,28 +35,33 @@ logger.info("Azure LLM Client: Cost tracking imported successfully")
 
 # Azure deployment name mapping
 # Maps OpenAI model names to Azure deployment names
-AZURE_DEPLOYMENT_MAPPING = {
-    # T0 - Simple tasks (gpt-35-turbo)
-    "gpt-3.5-turbo": os.getenv("AZURE_GPT35_DEPLOYMENT", "gpt-35-turbo"),
-    "gpt-35-turbo": "gpt-35-turbo",
-    
-    # T1 - Medium tasks (gpt-4.1-mini or gpt-4.1-nano)
-    "gpt-4o-mini": os.getenv("AZURE_GPT4_MINI_DEPLOYMENT", "gpt-4.1-mini"),
-    "gpt-4.1-mini": "gpt-4.1-mini",
-    "gpt-4.1-nano": "gpt-4.1-nano",
-    
-    # T2 - Complex tasks (gpt-4 or o4-mini)
-    "gpt-4-turbo-preview": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
-    "gpt-4-turbo": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
-    "gpt-4": "gpt-4",
-    "o4-mini": "o4-mini",
-    
-    # T3 - Meta tasks (gpt-4.1)
-    "gpt-4.1": "gpt-4.1",
-    
-    # Embeddings
-    "text-embedding-ada-002": os.getenv("AZURE_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002"),
-}
+def get_azure_deployment_mapping():
+    """Get Azure deployment mapping with environment variables resolved"""
+    return {
+        # T0 - Simple tasks (gpt-35-turbo)
+        "gpt-3.5-turbo": os.getenv("AZURE_GPT35_DEPLOYMENT", "gpt-35-turbo"),
+        "gpt-35-turbo": "gpt-35-turbo",
+        
+        # T1 - Medium tasks (gpt-4.1-mini or gpt-4.1-nano)
+        "gpt-4o-mini": os.getenv("AZURE_GPT4_MINI_DEPLOYMENT", "gpt-4.1-mini"),
+        "gpt-4.1-mini": "gpt-4.1-mini",
+        "gpt-4.1-nano": "gpt-4.1-nano",
+        
+        # T2 - Complex tasks (gpt-4 or o4-mini)
+        "gpt-4-turbo-preview": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
+        "gpt-4-turbo": os.getenv("AZURE_GPT4_DEPLOYMENT", "gpt-4"),
+        "gpt-4": "gpt-4",
+        "o4-mini": "o4-mini",
+        
+        # T3 - Meta tasks (gpt-4.1)
+        "gpt-4.1": "gpt-4.1",
+        
+        # Embeddings
+        "text-embedding-ada-002": os.getenv("AZURE_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002"),
+    }
+
+# Cache for deployment mapping
+_DEPLOYMENT_MAPPING_CACHE = None
 
 
 class LLMProvider(str, Enum):
@@ -337,7 +342,11 @@ class LLMClient:
                 if provider in [LLMProvider.OPENAI, LLMProvider.AZURE_OPENAI, LLMProvider.GROQ]:
                     # For Azure, map model names to deployment names
                     if provider == LLMProvider.AZURE_OPENAI:
-                        deployment_name = AZURE_DEPLOYMENT_MAPPING.get(model, model)
+                        # Get deployment mapping dynamically
+                        global _DEPLOYMENT_MAPPING_CACHE
+                        if _DEPLOYMENT_MAPPING_CACHE is None:
+                            _DEPLOYMENT_MAPPING_CACHE = get_azure_deployment_mapping()
+                        deployment_name = _DEPLOYMENT_MAPPING_CACHE.get(model, model)
                         logger.debug(f"Azure OpenAI: mapping {model} to deployment {deployment_name}")
                         model = deployment_name
                 

@@ -298,6 +298,44 @@ class Settings(BaseSettings):
     MULTI_TENANT_ENABLED: bool = Field(default=True)
     DEFAULT_TENANT_ID: str = Field(default="default")
     
+    # Workflow Configuration
+    WORKFLOW_ACTIVITY_TIMEOUT_MINUTES: int = Field(default=30, description="Default activity timeout in minutes")
+    WORKFLOW_LONG_ACTIVITY_TIMEOUT_MINUTES: int = Field(default=60, description="Long activity timeout in minutes")
+    WORKFLOW_HEARTBEAT_TIMEOUT_MINUTES: int = Field(default=5, description="Heartbeat timeout in minutes")
+    WORKFLOW_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=30, description="Heartbeat interval in seconds")
+    WORKFLOW_MAX_DURATION_HOURS: int = Field(default=24, description="Maximum workflow duration in hours")
+    WORKFLOW_MAX_BATCH_SIZE: int = Field(default=10, description="Maximum batch size for parallel execution")
+    WORKFLOW_MAX_CONCURRENT_ACTIVITIES: int = Field(default=20, description="Maximum concurrent activities")
+    WORKFLOW_MAX_CONCURRENT_WORKFLOWS: int = Field(default=10, description="Maximum concurrent workflows")
+    
+    # Enterprise Worker Configuration
+    ENABLE_DYNAMIC_SCALING: bool = Field(default=True, description="Enable dynamic batch size scaling")
+    ENABLE_ADAPTIVE_TIMEOUTS: bool = Field(default=True, description="Enable adaptive timeout calculation")
+    CIRCUIT_BREAKER_ENABLED: bool = Field(default=True, description="Enable circuit breaker for services")
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = Field(default=5, description="Failures before circuit opens")
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: int = Field(default=60, description="Recovery timeout in seconds")
+    
+    # Resource Monitoring Thresholds
+    CPU_THRESHOLD_HIGH: float = Field(default=80.0, description="High CPU threshold percentage")
+    CPU_THRESHOLD_LOW: float = Field(default=30.0, description="Low CPU threshold percentage")
+    MEMORY_THRESHOLD_HIGH: float = Field(default=80.0, description="High memory threshold percentage")
+    MEMORY_THRESHOLD_LOW: float = Field(default=30.0, description="Low memory threshold percentage")
+    MIN_BATCH_SIZE: int = Field(default=2, description="Minimum batch size")
+    MAX_BATCH_SIZE: int = Field(default=50, description="Maximum batch size")
+    
+    # Retry Configuration
+    RETRY_INITIAL_INTERVAL_SECONDS: int = Field(default=2, description="Initial retry interval")
+    RETRY_BACKOFF_COEFFICIENT: float = Field(default=2.0, description="Retry backoff coefficient")
+    RETRY_MAX_INTERVAL_MINUTES: int = Field(default=5, description="Maximum retry interval")
+    RETRY_MAX_ATTEMPTS: int = Field(default=3, description="Maximum retry attempts")
+    
+    # Language Detection
+    DETECT_LANGUAGE_FROM_REQUIREMENTS: bool = Field(default=True, description="Auto-detect programming language")
+    SUPPORTED_LANGUAGES: List[str] = Field(default=["python", "javascript", "typescript", "java", "go", "rust", "csharp"], description="Supported programming languages")
+    
+    # GitHub Integration
+    GITHUB_DEFAULT_BRANCH: str = Field(default="main", description="Default GitHub branch")
+    
     # Feature Flags
     FEATURE_ADVANCED_VALIDATION: bool = Field(default=True)
     FEATURE_AUTO_SCALING: bool = Field(default=False)

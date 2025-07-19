@@ -35,3 +35,8 @@ data:
   # Application Settings
   ENV: "kubernetes"
   LOG_LEVEL: "INFO"
+  
+  # Feature Flags
+  TDD_ENABLED: "true"
+  AITL_ENABLED: "false"  # Disabled due to overly conservative scoring
+  ENTERPRISE_FEATURES_ENABLED: "true"

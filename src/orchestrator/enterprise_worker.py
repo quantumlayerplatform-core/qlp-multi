@@ -21,7 +21,8 @@ import time
 # Import configuration
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Removed sys.path manipulation - not needed with proper imports and causes Temporal sandbox errors
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
 logging.basicConfig(

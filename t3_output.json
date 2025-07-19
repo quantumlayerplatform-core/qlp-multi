@@ -1,0 +1,140 @@
+{
+  "execution": {
+    "agent_tier_used": "T3",
+    "confidence_score": 0.9,
+    "execution_time": 45.572037,
+    "metadata": {
+      "agent_factory_url": "http://agent-factory:8001",
+      "agent_id": "30967791-4e44-4826-9ea6-0f8d6ac1bfc6",
+      "agent_plan": {
+        "agents": [
+          {
+            "subtask": "Generate initial solution",
+            "type": "T1"
+          },
+          {
+            "subtask": "Validate and refine",
+            "type": "T2"
+          },
+          {
+            "subtask": "Generate tests",
+            "type": "T0"
+          }
+        ]
+      },
+      "execution_method": "agent_service",
+      "sub_agents_used": 3
+    },
+    "output": {
+      "language": "python",
+      "sub_agent_results": [
+        {
+          "agent_tier_used": "T1",
+          "confidence_score": 0.85,
+          "execution_time": 6.609003,
+          "metadata": {
+            "agent_id": "959435e3-4111-460f-837f-d7fad509bf13",
+            "language": "python",
+            "language_source": "detection",
+            "patterns_used": 0
+          },
+          "output": {
+            "code": "from typing import Union\n\nclass FactorialError(ValueError):\n    \"\"\"Custom exception for factorial calculation errors.\"\"\"\n    pass\n\ndef factorial(n: Union[int, float]) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int or float): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        FactorialError: If n is not an integer or is negative.\n        TypeError: If n is not a number.\n\n    Examples:\n        >>> factorial(5)\n        120\n\n    \"\"\"\n    if not isinstance(n, (int, float)):\n        raise TypeError(f\"Input must be a number, got {type(n).__name__}\")\n\n    if isinstance(n, float):\n        if not n.is_integer():\n            raise FactorialError(f\"Input must be an integer, got float {n}\")\n        n = int(n)\n\n    if n < 0:\n        raise FactorialError(\"Input must be a non-negative integer\")\n\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result\n\nif __name__ == \"__main__\":\n    import sys\n    try:\n        if len(sys.argv) != 2:\n            print(\"Usage: python main.py <non-negative integer>\")\n            sys.exit(1)\n        input_value = sys.argv[1]\n        # Attempt to convert input to float first to validate\n        num = float(input_value)\n        print(f\"Factorial of {int(num)} is {factorial(num)}\")\n    except Exception as e:\n        print(f\"Error: {e}\")\n        sys.exit(1)\n",
+            "dependencies": [],
+            "documentation": "This Python module provides a robust factorial calculation function `factorial` that accepts a non-negative integer or a float representing an integer. It includes comprehensive input validation and raises custom exceptions for invalid inputs. The function calculates the factorial iteratively to ensure performance and avoids recursion limits. The module also defines a custom exception `FactorialError` for specific factorial-related errors. A command-line interface is provided for quick testing. Unit tests are included using pytest to verify correct behavior and error handling.",
+            "language": "python",
+            "tests": "import pytest\nfrom main import factorial, FactorialError\n\ndef test_factorial_basic():\n    assert factorial(0) == 1\n    assert factorial(1) == 1\n    assert factorial(5) == 120\n    assert factorial(10) == 3628800\n\ndef test_factorial_float_integer():\n    assert factorial(5.0) == 120\n\ndef test_factorial_invalid_float():\n    with pytest.raises(FactorialError):\n        factorial(3.5)\n\ndef test_factorial_negative():\n    with pytest.raises(FactorialError):\n        factorial(-1)\n\ndef test_factorial_invalid_type():\n    with pytest.raises(TypeError):\n        factorial(\"string\")\n    with pytest.raises(TypeError):\n        factorial(None)\n    with pytest.raises(TypeError):\n        factorial([])\n"
+          },
+          "output_type": "code",
+          "status": "completed",
+          "task_id": "8c5ecc29-373e-40da-8360-d56328da0138"
+        },
+        {
+          "agent_tier_used": "T2",
+          "confidence_score": 0.95,
+          "execution_time": 37.24024,
+          "metadata": {
+            "agent_id": "52fc543c-76e6-4ae0-8323-5a113851ce2f",
+            "iterations": 2,
+            "language": "python",
+            "language_source": "detection",
+            "validation_passed": true
+          },
+          "output": {
+            "code": "class NonIntegerError(TypeError):\n    \"\"\"Exception raised for errors in the input type.\"\"\"\n    pass\n\nclass NegativeValueError(ValueError):\n    \"\"\"Exception raised for negative input values.\"\"\"\n    pass\n\ndef factorial(n: int) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        NonIntegerError: If n is not an integer.\n        NegativeValueError: If n is negative.\n\n    Examples:\n        >>> factorial(5)\n        120\n    \"\"\"\n    if not isinstance(n, int):\n        raise NonIntegerError(\"Input must be an integer\")\n    \n    if n < 0:\n        raise NegativeValueError(\"Input must be a non-negative integer\")\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result",
+            "dependencies": [],
+            "language": "python"
+          },
+          "output_type": "code",
+          "status": "completed",
+          "task_id": "d898990d-ca1b-43f8-bf20-d5a1a8ff87b9"
+        },
+        {
+          "agent_tier_used": "T0",
+          "confidence_score": 0.7,
+          "execution_time": 1.720494,
+          "metadata": {
+            "agent_id": "7647722b-5765-41f7-a4c2-1d5e413b414b",
+            "language": "python",
+            "language_source": "metadata",
+            "model": "gpt-35-turbo",
+            "provider": "azure_openai"
+          },
+          "output": {
+            "code": "from typing import Union\n\nclass NonIntegerError(TypeError):\n    \"\"\"Exception raised for errors in the input type.\"\"\"\n    pass\n\nclass NegativeValueError(ValueError):\n    \"\"\"Exception raised for negative input values.\"\"\"\n    pass\n\ndef factorial(n: int) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        NonIntegerError: If n is not an integer.\n        NegativeValueError: If n is negative.\n\n    Examples:\n        >>> factorial(5)\n        120\n    \"\"\"\n    if not isinstance(n, int):\n        raise NonIntegerError(\"Input must be an integer\")\n    \n    if n < 0:\n        raise NegativeValueError(\"Input must be a non-negative integer\")\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result",
+            "content": "from typing import Union\n\nclass NonIntegerError(TypeError):\n    \"\"\"Exception raised for errors in the input type.\"\"\"\n    pass\n\nclass NegativeValueError(ValueError):\n    \"\"\"Exception raised for negative input values.\"\"\"\n    pass\n\ndef factorial(n: int) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        NonIntegerError: If n is not an integer.\n        NegativeValueError: If n is negative.\n\n    Examples:\n        >>> factorial(5)\n        120\n    \"\"\"\n    if not isinstance(n, int):\n        raise NonIntegerError(\"Input must be an integer\")\n    \n    if n < 0:\n        raise NegativeValueError(\"Input must be a non-negative integer\")\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result",
+            "language": "python"
+          },
+          "output_type": "code",
+          "status": "completed",
+          "task_id": "ea13fed8-f5d1-494b-b8c4-0fd173886e16"
+        }
+      ],
+      "synthesized_output": {
+        "code": "from typing import Union\n\nclass FactorialError(ValueError):\n    \"\"\"Custom exception for factorial calculation errors.\"\"\"\n    pass\n\ndef factorial(n: Union[int, float]) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int or float): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        FactorialError: If n is not an integer or is negative.\n        TypeError: If n is not a number.\n\n    Examples:\n        >>> factorial(5)\n        120\n\n    \"\"\"\n    if not isinstance(n, (int, float)):\n        raise TypeError(f\"Input must be a number, got {type(n).__name__}\")\n\n    if isinstance(n, float):\n        if not n.is_integer():\n            raise FactorialError(f\"Input must be an integer, got float {n}\")\n        n = int(n)\n\n    if n < 0:\n        raise FactorialError(\"Input must be a non-negative integer\")\n\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result\n\nif __name__ == \"__main__\":\n    import sys\n    try:\n        if len(sys.argv) != 2:\n            print(\"Usage: python main.py <non-negative integer>\")\n            sys.exit(1)\n        input_value = sys.argv[1]\n        # Attempt to convert input to float first to validate\n        num = float(input_value)\n        print(f\"Factorial of {int(num)} is {factorial(num)}\")\n    except Exception as e:\n        print(f\"Error: {e}\")\n        sys.exit(1)\n",
+        "language": "python",
+        "tests": "from typing import Union\n\nclass NonIntegerError(TypeError):\n    \"\"\"Exception raised for errors in the input type.\"\"\"\n    pass\n\nclass NegativeValueError(ValueError):\n    \"\"\"Exception raised for negative input values.\"\"\"\n    pass\n\ndef factorial(n: int) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        NonIntegerError: If n is not an integer.\n        NegativeValueError: If n is negative.\n\n    Examples:\n        >>> factorial(5)\n        120\n    \"\"\"\n    if not isinstance(n, int):\n        raise NonIntegerError(\"Input must be an integer\")\n    \n    if n < 0:\n        raise NegativeValueError(\"Input must be a non-negative integer\")\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result",
+        "validation": {
+          "code": "class NonIntegerError(TypeError):\n    \"\"\"Exception raised for errors in the input type.\"\"\"\n    pass\n\nclass NegativeValueError(ValueError):\n    \"\"\"Exception raised for negative input values.\"\"\"\n    pass\n\ndef factorial(n: int) -> int:\n    \"\"\"\n    Calculate the factorial of a non-negative integer n.\n\n    Args:\n        n (int): The number to calculate the factorial for. Must be a non-negative integer.\n\n    Returns:\n        int: The factorial of n.\n\n    Raises:\n        NonIntegerError: If n is not an integer.\n        NegativeValueError: If n is negative.\n\n    Examples:\n        >>> factorial(5)\n        120\n    \"\"\"\n    if not isinstance(n, int):\n        raise NonIntegerError(\"Input must be an integer\")\n    \n    if n < 0:\n        raise NegativeValueError(\"Input must be a non-negative integer\")\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result",
+          "dependencies": [],
+          "language": "python"
+        }
+      }
+    },
+    "output_type": "meta_execution",
+    "status": "completed",
+    "task_id": "task-1"
+  },
+  "review": {
+    "aitl_processed": false,
+    "approved": true,
+    "comments": "Auto-approved (AITL disabled)",
+    "confidence": 1.0,
+    "decision": "auto_approved",
+    "modifications": {
+      "estimated_fix_time": 0,
+      "modifications_required": [],
+      "security_issues": []
+    },
+    "quality_score": 0.8,
+    "reviewer": "system"
+  },
+  "sandbox": null,
+  "task_id": "task-1",
+  "validation": {
+    "checks": [
+      {
+        "message": "No code found in execution output",
+        "name": "code_extraction",
+        "status": "failed",
+        "type": "basic"
+      }
+    ],
+    "confidence_score": 0,
+    "metadata": {
+      "reason": "no_code"
+    },
+    "overall_status": "failed",
+    "requires_human_review": true
+  }
+}
