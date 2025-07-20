@@ -196,8 +196,8 @@ RATE_LIMIT_ENABLED=true
 RATE_LIMIT_DEFAULT=60/minute
 ENABLE_SWAGGER_UI=true
 ENABLE_REDOC=true
-TRUSTED_HOSTS=*.quantumlayer.com,localhost
-CORS_ORIGINS=https://app.quantumlayer.com
+TRUSTED_HOSTS=*.quantumlayerplatform.com,localhost
+CORS_ORIGINS=https://app.quantumlayerplatform.com
 ```
 
 ## Migration from v1
@@ -254,7 +254,7 @@ k6 run --vus 100 --duration 30s load-test.js
 ### Security Testing
 ```bash
 # OWASP ZAP API scan
-zap-api-scan.py -t https://api.quantumlayer.com/api/v2/openapi.json
+zap-api-scan.py -t https://api.quantumlayerplatform.com/api/v2/openapi.json
 ```
 
 ## Performance Optimizations

@@ -405,5 +405,5 @@ async def execute_v1(request: ExecutionRequest):
 ## Getting Help
 
 - API Documentation: `/api/v2/docs`
-- Migration Support: `support@quantumlayer.com`
-- Status Page: `https://status.quantumlayer.com`
+- Migration Support: `support@quantumlayerplatform.com`
+- Status Page: `https://status.quantumlayerplatform.com`

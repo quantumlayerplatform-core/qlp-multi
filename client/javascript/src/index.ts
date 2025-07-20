@@ -102,7 +102,7 @@ export class QLPClient {
   constructor(config: QLPClientConfig = {}) {
     const {
       apiKey = process.env.QLP_API_KEY,
-      baseUrl = 'https://api.quantumlayer.com',
+      baseUrl = 'https://api.quantumlayerplatform.com',
       timeout = 300000 // 5 minutes
     } = config;
     

@@ -272,7 +272,7 @@ def setup_middleware(app):
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=[
-            "*.quantumlayer.com",
+            "*.quantumlayerplatform.com",
             "localhost",
             "127.0.0.1",
             "orchestrator",  # Docker service name
@@ -296,8 +296,8 @@ def setup_middleware(app):
     is_development = os.getenv("ENVIRONMENT", "development") == "development"
     
     allowed_origins = ["*"] if is_development else [
-        "https://app.quantumlayer.com",
-        "https://staging.quantumlayer.com",
+        "https://app.quantumlayerplatform.com",
+        "https://staging.quantumlayerplatform.com",
         "http://localhost:3000"
     ]
     

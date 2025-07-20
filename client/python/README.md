@@ -180,8 +180,8 @@ The API has rate limits. The client will automatically handle rate limit respons
 
 ## Support
 
-- Documentation: https://docs.quantumlayer.com
-- API Reference: https://api.quantumlayer.com/docs
+- Documentation: https://docs.quantumlayerplatform.com
+- API Reference: https://api.quantumlayerplatform.com/docs
 - Issues: https://github.com/quantumlayer/qlp-python-client/issues
 
 ## License

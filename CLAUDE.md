@@ -8,7 +8,7 @@ Quantum Layer Platform (QLP) is an AI-powered enterprise software development sy
 
 **Core Concept**: Request → Orchestrator → Task Decomposition → Agent Execution → Validation → Capsule Creation → Delivery/GitHub
 
-**Current Status**: Core platform operational with Temporal Cloud integration in progress for production deployment on Azure Kubernetes Service (AKS)
+**Current Status**: Core platform operational with enterprise features. Temporal sandbox restrictions affecting enterprise workflows
 
 ## High-Level Architecture
 

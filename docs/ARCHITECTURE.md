@@ -112,20 +112,38 @@ The platform consists of 5 core microservices, each with a specific responsibili
 
 **Key Features**:
 - RESTful API with OpenAPI documentation
-- Temporal workflow integration
+- Temporal workflow integration with Cloud support
 - Request decomposition engine
 - Result aggregation and packaging
+- Enterprise-grade capsule generation
+- GitHub integration with auto-push
+- Test-Driven Development (TDD) workflow
+- Multi-language universal support
 
 **Key Endpoints**:
 - `POST /execute` - Complete end-to-end workflow execution
+- `POST /execute/enterprise` - Enterprise-grade capsule generation with comprehensive docs
 - `POST /generate/capsule` - Generate complete software capsule
+- `POST /generate/complete-with-github` - Generate and push to GitHub
+- `POST /generate/complete-with-github-sync` - Synchronous GitHub generation
+- `POST /generate/complete-pipeline` - Full pipeline with all features
+- `POST /generate/robust-capsule` - Production-grade generation
+- `POST /api/enterprise/generate` - Enterprise-grade project generation
+- `POST /api/enterprise/github-push` - Push existing capsule with enterprise structure
 - `POST /decompose/enhanced` - Enhanced decomposition with pattern selection
 - `POST /patterns/analyze` - Analyze request characteristics for pattern selection
 - `POST /patterns/recommend` - Get intelligent pattern recommendations
 - `POST /patterns/explain` - Detailed pattern selection explanations
 - `GET /patterns/usage-guide` - Complete pattern usage documentation
 - `POST /capsule/{id}/export/{format}` - Export capsule in various formats
+- `POST /capsule/{id}/deliver` - Package and deliver capsule
+- `GET /api/capsules/{id}/download` - Download capsule
 - `POST /capsule/{id}/version` - Create new version
+- `GET /capsule/{id}/history` - Version history
+- `POST /api/github/push` - Push capsule to GitHub
+- `GET /api/github/{owner}/{repo}/status` - Repository status
+- `POST /api/github/{owner}/{repo}/pr` - Create pull request
+- `GET /workflow/status/{workflow_id}` - Workflow status
 - `GET /health` - Service health check
 
 #### Intelligent Pattern Selection Engine
@@ -161,6 +179,29 @@ The platform consists of 5 core microservices, each with a specific responsibili
 - Higher quality task decomposition
 - Complete automation of "which pattern to use for what?"
 
+#### Enterprise Capsule Generator
+
+**Purpose**: Generate enterprise-grade, production-ready software capsules
+
+**Key Components**:
+- **Intelligent Language Detection**: Automatically detects programming language from requirements
+- **Meta-Prompt Engineering**: Uses advanced prompts to understand project context
+- **Comprehensive Documentation**: Generates README, API docs, architecture diagrams
+- **Best Practices Enforcement**: Includes linting, testing, CI/CD, Docker configurations
+- **Multi-Language Support**: Supports all major programming languages without hardcoded assumptions
+
+**Generated Artifacts**:
+- Complete source code with proper structure
+- Comprehensive test suites (unit, integration, e2e)
+- README with badges, examples, installation guide
+- API documentation (OpenAPI/Swagger)
+- Architecture documentation
+- CI/CD pipelines (GitHub Actions, GitLab CI)
+- Docker multi-stage builds
+- Security policies and compliance docs
+- Contributing guidelines
+- License files
+
 ### 2. Agent Factory
 
 **Purpose**: Intelligent agent selection and management
@@ -171,8 +212,15 @@ The platform consists of 5 core microservices, each with a specific responsibili
 - **T2 (Reasoning)**: Claude for complex problem solving
 - **T3 (Meta-agents)**: Orchestrate other agents for large tasks
 
+**Special Agents**:
+- **CapsuleGeneratorAgent**: Enterprise-grade capsule generation with meta-prompts
+- **CapsuleCriticAgent**: Quality assessment and improvement suggestions
+- **ExecutionValidatorAgent**: Runtime validation and testing
+- **ProductionArchitectAgent**: Production-ready architecture design
+
 **Model Integration**:
 - Azure OpenAI (Primary)
+- AWS Bedrock (Claude, Llama, Mistral)
 - Anthropic Claude
 - Groq/Llama
 - OpenAI GPT-4
@@ -218,18 +266,25 @@ The platform consists of 5 core microservices, each with a specific responsibili
 - **Async**: asyncio with async/await patterns
 
 ### AI/ML Stack
-- **Primary LLM**: Azure OpenAI (GPT-4)
-- **Secondary LLMs**: Anthropic Claude, Groq Llama
+- **Primary LLM**: Azure OpenAI (GPT-4, GPT-3.5)
+- **Secondary LLMs**: AWS Bedrock (Claude 3, Llama 3, Mistral)
+- **Alternative Providers**: Anthropic Claude, Groq, OpenAI
 - **Frameworks**: LangChain, LlamaIndex
 - **Vector DB**: Qdrant (primary), Weaviate (alternative)
+- **Model Selection**: Tier-based routing (T0-T3) for cost optimization
 
 ### Infrastructure
-- **Orchestration**: Temporal workflows
+- **Orchestration**: Temporal Cloud (production), Temporal (local)
+  - Endpoint: us-west-2.aws.api.temporal.io:7233
+  - Namespace: qlp-beta.f6bob
 - **Message Queue**: Kafka/RabbitMQ
 - **Caching**: Redis
-- **Database**: PostgreSQL
-- **Container**: Docker, Kubernetes
+- **Database**: PostgreSQL (Supabase in production)
+- **Container**: Docker, Kubernetes (AKS)
+  - Azure Container Registry: qlpregistry.azurecr.io
+  - Application Gateway: 85.210.217.253
 - **Service Mesh**: Istio (optional)
+- **Version Control**: GitHub API v3 integration
 
 ### Observability
 - **Metrics**: Prometheus + Grafana
@@ -408,15 +463,51 @@ The platform consists of 5 core microservices, each with a specific responsibili
 - 99.9% uptime SLA
 - Support for 1000+ concurrent users
 
+## Recent Enhancements (July 2025)
+
+### Enterprise Features
+- **Enterprise Capsule Generator**: AI-powered project structure generation
+- **Intelligent File Organization**: LLM-based file categorization for any language
+- **Universal CI/CD Generation**: Automatic pipeline creation for GitHub Actions, GitLab CI, Jenkins
+- **GitHub Actions Monitoring**: Self-healing CI/CD with automatic fix generation
+- **Test-Driven Development**: Automatic TDD workflow for complex projects
+- **Multi-Language Support**: True universal language support without hardcoded assumptions
+
+### Scalability Improvements
+- **Dynamic Resource Scaling**: Automatically adjusts concurrent activities based on system resources
+- **Adaptive Timeouts**: Calculates timeouts based on task complexity
+- **Circuit Breakers**: Prevents cascading failures with half-open states
+- **Intelligent Retry Logic**: Exponential backoff with jitter
+- **Error Classification**: Categorizes errors by severity and type
+
+### Integration Enhancements
+- **Temporal Cloud Integration**: Production deployment with API key authentication
+- **AWS Bedrock Support**: Multi-model support (Claude 3, Llama 3, Mistral)
+- **Azure Container Registry**: Multi-architecture image support
+- **Application Gateway Ingress**: Production-grade ingress controller
+- **GitHub Auto-Push**: Direct repository creation and code push
+
+### Performance Optimizations
+- **Intelligent Batch Sizing**: Dynamic batch sizes for parallel execution
+- **Resource Monitoring**: Real-time CPU/memory monitoring
+- **Provider Health Checks**: Automatic failover between LLM providers
+- **Regional Optimization**: Selects optimal regions for cloud services
+- **Ensemble Validation**: Multi-provider consensus for critical tasks
+
 ## Future Roadmap
 
-### Phase 1: Enhanced Capabilities
+### Phase 1: Enhanced Capabilities (In Progress)
+- [x] Enterprise capsule generation
+- [x] Universal language support
+- [x] Self-healing CI/CD
 - [ ] Web UI development
 - [ ] Real-time collaboration features
 - [ ] Advanced debugging tools
 - [ ] Plugin system for extensions
 
 ### Phase 2: Enterprise Features
+- [x] Temporal Cloud integration
+- [x] AWS Bedrock integration
 - [ ] Private model deployment
 - [ ] On-premise installation
 - [ ] Advanced security features
@@ -427,12 +518,14 @@ The platform consists of 5 core microservices, each with a specific responsibili
 - [ ] Multi-modal inputs (diagrams, sketches)
 - [ ] Automated refactoring
 - [ ] Performance optimization AI
+- [ ] Code migration assistant
 
 ### Phase 4: Ecosystem
 - [ ] Marketplace for templates
 - [ ] Community contributions
 - [ ] Integration hub
 - [ ] Developer SDK
+- [ ] VS Code extension
 
 ## Conclusion
 

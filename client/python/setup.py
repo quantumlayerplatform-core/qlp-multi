@@ -17,7 +17,7 @@ setup(
     name="qlp-client",
     version="2.0.0",
     author="Quantum Layer Platform",
-    author_email="support@quantumlayer.com",
+    author_email="support@quantumlayerplatform.com",
     description="Official Python client for Quantum Layer Platform v2 API",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -50,8 +50,8 @@ setup(
         ]
     },
     project_urls={
-        "Documentation": "https://docs.quantumlayer.com/client/python",
-        "API Reference": "https://api.quantumlayer.com/docs",
+        "Documentation": "https://docs.quantumlayerplatform.com/client/python",
+        "API Reference": "https://api.quantumlayerplatform.com/docs",
         "Bug Reports": "https://github.com/quantumlayer/qlp-python-client/issues",
         "Source": "https://github.com/quantumlayer/qlp-python-client",
     },

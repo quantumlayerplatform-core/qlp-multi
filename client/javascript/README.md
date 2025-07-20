@@ -247,8 +247,8 @@ import {
 
 ## Support
 
-- Documentation: https://docs.quantumlayer.com
-- API Reference: https://api.quantumlayer.com/docs
+- Documentation: https://docs.quantumlayerplatform.com
+- API Reference: https://api.quantumlayerplatform.com/docs
 - Issues: https://github.com/quantumlayer/qlp-js-client/issues
 
 ## License

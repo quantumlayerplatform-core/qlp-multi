@@ -378,7 +378,7 @@ A: Webhooks are being redesigned for v2. Use polling with the status link for no
 For migration assistance:
 - Documentation: https://docs.qlp.com/api/v2
 - Migration tool: https://migrate.qlp.com
-- Support: support@quantumlayer.com
+- Support: support@quantumlayerplatform.com
 
 ## Automated Migration Tool
 

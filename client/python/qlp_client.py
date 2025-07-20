@@ -70,7 +70,7 @@ class QLPClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.quantumlayer.com",
+        base_url: str = "https://api.quantumlayerplatform.com",
         timeout: float = 300.0
     ):
         """

@@ -10,15 +10,23 @@ The Quantum Layer Platform (QLP) is a comprehensive AI-powered software developm
 
 **What it does**: Converts plain English descriptions into fully functional code
 
-**Supported Languages**:
-- Python (primary)
-- JavaScript/TypeScript
+**Supported Languages** (Universal Support - No Hardcoded Assumptions):
+- Python (all frameworks: FastAPI, Django, Flask, etc.)
+- JavaScript/TypeScript (Node.js, React, Vue, Angular, etc.)
 - Go
-- Java
-- C++
+- Java (Spring Boot, Micronaut, Quarkus)
+- C++ (modern and legacy)
 - Rust
-- Ruby
-- PHP
+- Ruby (Rails, Sinatra)
+- PHP (Laravel, Symfony)
+- C# (.NET Core, ASP.NET)
+- Swift (iOS, macOS)
+- Kotlin (Android, JVM)
+- Scala
+- R (data science)
+- Julia
+- Dart (Flutter)
+- And many more...
 
 **Example Request**:
 ```json
@@ -218,6 +226,85 @@ POST /capsule/merge
 - Async/concurrent programming
 - Memory management
 
+## Enterprise Capabilities
+
+### 1. Enterprise-Grade Capsule Generation
+
+**What it does**: Creates production-ready projects with comprehensive documentation and best practices
+
+**Features**:
+- **Intelligent Project Structure**: AI determines optimal folder organization
+- **Comprehensive Documentation**:
+  - README with badges, installation, usage, examples
+  - API documentation (OpenAPI/Swagger)
+  - Architecture diagrams and decisions
+  - Contributing guidelines
+  - Code of conduct
+- **Production Configurations**:
+  - Multi-stage Docker builds
+  - Docker Compose for local development
+  - Kubernetes manifests
+  - Environment variable management
+- **CI/CD Pipelines**:
+  - GitHub Actions workflows
+  - GitLab CI pipelines
+  - Jenkins configurations
+  - Self-healing capabilities
+- **Quality Assurance**:
+  - Comprehensive test suites
+  - Code coverage reports
+  - Linting configurations
+  - Security scanning
+
+### 2. Intelligent Language Support
+
+**What it does**: Automatically detects and generates code in the optimal language
+
+**Features**:
+- **No Hardcoded Assumptions**: Pure AI-driven language selection
+- **Framework Detection**: Automatically selects best framework for the task
+- **Language-Specific Best Practices**: Follows conventions for each language
+- **Mixed Language Projects**: Can generate polyglot solutions
+- **Dependency Management**: Creates appropriate package files (package.json, requirements.txt, go.mod, etc.)
+
+### 3. GitHub Integration
+
+**What it does**: Direct integration with GitHub for seamless deployment
+
+**Features**:
+- **Auto Repository Creation**: Creates public or private repos
+- **Direct Push**: No manual intervention needed
+- **Branch Management**: Creates feature branches
+- **Pull Request Support**: Can create PRs with descriptions
+- **Actions Monitoring**: Monitors CI/CD and auto-fixes failures
+- **Issue Integration**: Can reference and close issues
+
+### 4. Test-Driven Development (TDD)
+
+**What it does**: Automatically implements TDD workflow when appropriate
+
+**Features**:
+- **Automatic Detection**: Identifies when TDD is beneficial
+- **Test-First Generation**: Creates tests before implementation
+- **Iterative Refinement**: Code evolves to pass all tests
+- **Multiple Test Types**:
+  - Unit tests with mocking
+  - Integration tests
+  - End-to-end tests
+  - Performance tests
+- **Coverage Tracking**: Ensures high code coverage
+
+### 5. Self-Healing CI/CD
+
+**What it does**: Monitors and automatically fixes CI/CD pipeline failures
+
+**Features**:
+- **Real-time Monitoring**: Tracks GitHub Actions, GitLab CI, etc.
+- **Intelligent Error Analysis**: Understands failure reasons
+- **Automatic Fix Generation**: Creates fixes for common issues
+- **Retry with Fixes**: Automatically retries failed builds
+- **Learning System**: Improves over time
+
 ## Advanced Capabilities
 
 ### 1. Capsule Management
@@ -291,40 +378,82 @@ POST /capsule/merge
 
 **Key Endpoints**:
 
-#### Generate Capsule
+#### Execute Request (Main Workflow)
 ```http
-POST /generate/capsule
+POST /execute
+Content-Type: application/json
+
+{
+  "description": "Create a REST API for user management",
+  "requirements": "Include CRUD operations, authentication, PostgreSQL",
+  "tech_stack": ["Python", "FastAPI"],
+  "use_enterprise_capsule": false  // Set to true for enterprise features
+}
+```
+
+#### Execute Enterprise Request
+```http
+POST /execute/enterprise
+Content-Type: application/json
+
+{
+  "description": "Create a production-ready microservice",
+  "requirements": "Include comprehensive docs, tests, CI/CD, Docker",
+  "tech_stack": ["Go"]  // Or let AI decide
+}
+```
+
+#### Generate Complete Project with GitHub
+```http
+POST /generate/complete-with-github
 Content-Type: application/json
 
 {
   "request_id": "unique-id",
-  "tenant_id": "org-id",
-  "user_id": "user-id",
-  "project_name": "My Project",
-  "description": "Project description",
-  "requirements": "Detailed requirements",
+  "project_name": "My Awesome API",
+  "description": "REST API with authentication",
+  "requirements": "JWT auth, user CRUD, PostgreSQL",
   "tech_stack": ["Python", "FastAPI"],
-  "constraints": ["Must be async", "PostgreSQL required"]
+  "github_repo": "my-awesome-api",
+  "github_private": false
 }
 ```
 
-#### Export Capsule
+#### Enterprise Generate
 ```http
-POST /capsule/{capsule_id}/export/{format}
-
-Formats: ZIP, TAR, TAR.GZ
-```
-
-#### Create Version
-```http
-POST /capsule/{capsule_id}/version
+POST /api/enterprise/generate
 Content-Type: application/json
 
 {
-  "author": "developer@example.com",
-  "message": "Added authentication",
-  "changes": { ... }
+  "request_id": "unique-id",
+  "project_name": "Enterprise Service",
+  "description": "Production-grade microservice",
+  "requirements": "Scalable, secure, observable",
+  "tech_stack": ["Java", "Spring Boot"]
 }
+```
+
+#### Push to GitHub
+```http
+POST /api/github/push
+Content-Type: application/json
+
+{
+  "capsule_id": "capsule-uuid",
+  "repo_name": "my-project",
+  "private": false,
+  "branch": "main"
+}
+```
+
+#### Download Capsule
+```http
+GET /api/capsules/{capsule_id}/download?format=zip
+```
+
+#### Monitor Workflow
+```http
+GET /workflow/status/{workflow_id}
 ```
 
 ### Webhook Support
@@ -409,7 +538,7 @@ Content-Type: application/json
 ```python
 import requests
 
-# Generate a simple API
+# 1. Generate a simple API
 response = requests.post(
     "http://localhost:8000/generate/capsule",
     json={
@@ -426,24 +555,73 @@ response = requests.post(
 result = response.json()
 print(f"Generated capsule: {result['capsule_id']}")
 print(f"Files created: {result['files_generated']}")
+
+# 2. Generate an enterprise-grade project
+response = requests.post(
+    "http://localhost:8000/execute/enterprise",
+    json={
+        "description": "Create a production-ready user management microservice",
+        "requirements": "JWT authentication, CRUD operations, PostgreSQL, comprehensive tests, Docker, CI/CD",
+        "tech_stack": ["Python", "FastAPI"]  # Optional - AI can decide
+    }
+)
+
+result = response.json()
+print(f"Workflow ID: {result['workflow_id']}")
+print(f"Features: {result['features']}")
+
+# 3. Generate and push to GitHub
+response = requests.post(
+    "http://localhost:8000/generate/complete-with-github",
+    json={
+        "request_id": "github-project-001",
+        "project_name": "My Awesome API",
+        "description": "REST API with authentication",
+        "requirements": "JWT auth, user CRUD, PostgreSQL, full documentation",
+        "tech_stack": ["Go"],  # Try a different language!
+        "github_repo": "my-awesome-api",
+        "github_private": False
+    }
+)
+
+result = response.json()
+print(f"GitHub URL: {result.get('github_url')}")
+print(f"CI/CD Status: {result.get('actions_status')}")
 ```
 
 ## Future Capabilities (Roadmap)
 
 ### Coming Soon
-- [ ] Frontend UI generation (React, Vue)
-- [ ] Mobile app generation (React Native, Flutter)
-- [ ] Database schema design AI
-- [ ] Automated refactoring
-- [ ] Performance optimization AI
-- [ ] Multi-modal inputs (diagrams to code)
+- [ ] Frontend UI generation (React, Vue, Angular)
+- [ ] Mobile app generation (React Native, Flutter, SwiftUI)
+- [ ] Database schema design AI with migration support
+- [ ] Automated refactoring with code modernization
+- [ ] Performance optimization AI with profiling
+- [ ] Multi-modal inputs (diagrams, sketches, voice to code)
+- [ ] Real-time collaboration features
+- [ ] VS Code and IntelliJ plugins
+
+### Recently Completed (July 2025)
+- [x] Enterprise-grade capsule generation
+- [x] Universal language support (no hardcoded assumptions)
+- [x] Self-healing CI/CD pipelines
+- [x] GitHub integration with auto-push
+- [x] Test-Driven Development workflow
+- [x] AWS Bedrock multi-model support
+- [x] Temporal Cloud integration
+- [x] Dynamic resource scaling
+- [x] Circuit breaker implementation
+- [x] Intelligent file organization
 
 ### Long-term Vision
-- [ ] Full-stack application generation
-- [ ] AI-powered debugging
-- [ ] Automated scaling decisions
-- [ ] Self-healing code
-- [ ] Continuous optimization
+- [ ] Full-stack application generation with UI/UX
+- [ ] AI-powered debugging and root cause analysis
+- [ ] Automated scaling decisions with cost optimization
+- [ ] Self-healing code with automatic bug fixes
+- [ ] Continuous optimization and refactoring
+- [ ] Custom LLM fine-tuning on organization code
+- [ ] Voice-to-code development
+- [ ] AR/VR code visualization
 
 ## Support and Resources
 

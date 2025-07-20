@@ -81,7 +81,7 @@ class ClerkAuth:
             if not self.secret_key:
                 return {
                     "user_id": "dev_user_123",
-                    "email": "dev@quantumlayer.com",
+                    "email": "dev@quantumlayerplatform.com",
                     "organizations": ["org_dev_456"],
                     "role": "admin",
                     "permissions": ["*"]
@@ -135,7 +135,7 @@ class ClerkAuth:
             # Development mode
             return {
                 "id": user_id,
-                "email": "dev@quantumlayer.com",
+                "email": "dev@quantumlayerplatform.com",
                 "first_name": "Dev",
                 "last_name": "User",
                 "organizations": ["org_dev_456"]

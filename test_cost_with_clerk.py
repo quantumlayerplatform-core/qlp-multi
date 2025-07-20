@@ -32,7 +32,7 @@ def create_dev_jwt_token():
     # Token payload that mimics Clerk's structure
     payload = {
         "sub": "user_test_123",  # user_id
-        "email": "test@quantumlayer.com",
+        "email": "test@quantumlayerplatform.com",
         "org_id": "org_test_456",  # organization_id (used as tenant_id)
         "org_role": "admin",
         "org_permissions": ["costs:read", "metrics:read"],

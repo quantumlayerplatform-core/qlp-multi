@@ -4,9 +4,110 @@ OpenAPI documentation customization for production API
 Provides rich documentation with examples, security schemes, and proper versioning.
 """
 
-from fastapi import FastAPI
+import os
+from typing import List, Dict, Any
+from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+
+try:
+    from .api_config import api_settings
+except ImportError:
+    # Fallback if running as standalone script
+    from api_config import api_settings
+
+
+def get_servers(request: Request = None) -> List[Dict[str, str]]:
+    """Get server URLs based on environment configuration and request context"""
+    servers = []
+    
+    # If we have a request object and auto-detect is enabled, try to detect current host
+    if request and api_settings.AUTO_DETECT_HOST and api_settings.is_development and not api_settings.API_BASE_URL:
+        scheme = request.url.scheme
+        host = request.headers.get("host", request.url.netloc)
+        # Remove any API path prefixes to get base URL
+        base_url = f"{scheme}://{host}"
+        servers.append({
+            "url": base_url,
+            "description": "Current server (auto-detected)"
+        })
+    
+    if api_settings.API_BASE_URL:
+        # If a custom URL is provided, use it as the primary server
+        servers.append({
+            "url": api_settings.API_BASE_URL,
+            "description": f"Custom API URL ({api_settings.ENVIRONMENT})"
+        })
+    
+    # Add environment-specific servers
+    if api_settings.is_production:
+        servers.extend([
+            {
+                "url": api_settings.PRODUCTION_API_URL,
+                "description": "Production server"
+            },
+            {
+                "url": api_settings.STAGING_API_URL,
+                "description": "Staging server"
+            }
+        ])
+    elif api_settings.is_staging:
+        servers.extend([
+            {
+                "url": api_settings.STAGING_API_URL,
+                "description": "Staging server"
+            },
+            {
+                "url": api_settings.PRODUCTION_API_URL,
+                "description": "Production server"
+            }
+        ])
+    
+    # Always add localhost for development/testing
+    servers.append({
+        "url": api_settings.LOCAL_API_URL,
+        "description": "Local development server"
+    })
+    
+    return servers
+
+
+def get_allowed_origins() -> str:
+    """Get allowed origins for CSP based on environment"""
+    # Base allowed origins
+    base_origins = [
+        "'self'",
+        "https://cdn.jsdelivr.net",
+        "https://unpkg.com"
+    ]
+    
+    # Add API URLs based on environment
+    if api_settings.is_production:
+        api_origins = [
+            api_settings.PRODUCTION_API_URL,
+            api_settings.STAGING_API_URL
+        ]
+    elif api_settings.is_staging:
+        api_origins = [
+            api_settings.STAGING_API_URL,
+            api_settings.PRODUCTION_API_URL
+        ]
+    else:  # development
+        api_origins = [
+            "http://localhost:*",
+            "http://127.0.0.1:*"
+        ]
+    
+    # Add custom API URL if provided
+    if api_settings.API_BASE_URL:
+        api_origins.append(api_settings.API_BASE_URL)
+    
+    # Add any additional allowed origins from environment
+    if api_settings.ADDITIONAL_ALLOWED_ORIGINS:
+        additional_origins = api_settings.ADDITIONAL_ALLOWED_ORIGINS.split(",")
+        api_origins.extend([origin.strip() for origin in additional_origins if origin.strip()])
+    
+    return " ".join(base_origins + api_origins)
 
 
 def custom_openapi(app: FastAPI):
@@ -118,9 +219,9 @@ For async operations, provide a webhook URL:
 
 ## Support
 
-- Documentation: https://docs.quantumlayer.com
-- Status: https://status.quantumlayer.com
-- Support: support@quantumlayer.com
+- Documentation: https://docs.quantumlayerplatform.com
+- Status: https://status.quantumlayerplatform.com
+- Support: support@quantumlayerplatform.com
         """,
         routes=app.routes,
         tags=[
@@ -129,7 +230,7 @@ For async operations, provide a webhook URL:
                 "description": "Capsule management operations",
                 "externalDocs": {
                     "description": "Capsule documentation",
-                    "url": "https://docs.quantumlayer.com/capsules"
+                    "url": "https://docs.quantumlayerplatform.com/capsules"
                 }
             },
             {
@@ -141,20 +242,7 @@ For async operations, provide a webhook URL:
                 "description": "Authentication operations"
             }
         ],
-        servers=[
-            {
-                "url": "https://api.quantumlayer.com",
-                "description": "Production server"
-            },
-            {
-                "url": "https://staging-api.quantumlayer.com",
-                "description": "Staging server"
-            },
-            {
-                "url": "http://localhost:8000",
-                "description": "Development server"
-            }
-        ],
+        servers=get_servers(),
     )
     
     # Add security schemes
@@ -263,26 +351,27 @@ def setup_documentation(app: FastAPI):
     """Setup custom documentation endpoints"""
     
     @app.get("/api/v2/docs", include_in_schema=False)
-    async def custom_swagger_ui_html():
+    async def custom_swagger_ui_html(request: Request):
         from fastapi.responses import HTMLResponse
         
         html_content = get_swagger_ui_html(
             openapi_url="/api/v2/openapi.json",
             title="QLP API v2 - Swagger UI",
-            swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
-            swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
-            swagger_favicon_url="https://quantumlayer.com/favicon.ico"
+            swagger_js_url=f"{api_settings.SWAGGER_CDN_URL}/swagger-ui-bundle.js",
+            swagger_css_url=f"{api_settings.SWAGGER_CDN_URL}/swagger-ui.css",
+            swagger_favicon_url="https://quantumlayerplatform.com/favicon.ico"
         )
         
         # Create custom response with proper CSP headers
         response = HTMLResponse(content=html_content.body.decode())
+        allowed_origins = get_allowed_origins()
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+            f"default-src {allowed_origins}; "
+            f"script-src {allowed_origins} 'unsafe-inline' 'unsafe-eval'; "
+            f"style-src {allowed_origins} 'unsafe-inline'; "
             "img-src 'self' data: https: blob:; "
-            "font-src 'self' data: https://cdn.jsdelivr.net https://unpkg.com; "
-            "connect-src 'self' http://localhost:* https://api.quantumlayer.com;"
+            f"font-src {allowed_origins} data:; "
+            f"connect-src {allowed_origins};"
         )
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         
@@ -295,19 +384,20 @@ def setup_documentation(app: FastAPI):
         html_content = get_redoc_html(
             openapi_url="/api/v2/openapi.json",
             title="QLP API v2 - ReDoc",
-            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@2.0.0/bundles/redoc.standalone.js",
-            redoc_favicon_url="https://quantumlayer.com/favicon.ico"
+            redoc_js_url=f"{api_settings.REDOC_CDN_URL}/bundles/redoc.standalone.js",
+            redoc_favicon_url="https://quantumlayerplatform.com/favicon.ico"
         )
         
         # Create custom response with proper CSP headers
         response = HTMLResponse(content=html_content.body.decode())
+        allowed_origins = get_allowed_origins()
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+            f"default-src {allowed_origins}; "
+            f"script-src {allowed_origins} 'unsafe-inline' 'unsafe-eval'; "
+            f"style-src {allowed_origins} 'unsafe-inline'; "
             "img-src 'self' data: https: blob:; "
-            "font-src 'self' data: https://cdn.jsdelivr.net https://unpkg.com; "
-            "connect-src 'self' http://localhost:* https://api.quantumlayer.com; "
+            f"font-src {allowed_origins} data:; "
+            f"connect-src {allowed_origins}; "
             "worker-src 'self' blob:;"  # ReDoc needs worker-src for blob: URLs
         )
         response.headers["X-Frame-Options"] = "SAMEORIGIN"

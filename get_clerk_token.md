@@ -18,7 +18,7 @@ https://dashboard.clerk.com/apps/knowing-pigeon-89/instances/development
    - Navigate to "Users" in the left sidebar
    - Click "Create user"
    - Fill in:
-     - Email: test@quantumlayer.com
+     - Email: test@quantumlayerplatform.com
      - Password: TestPassword123!
    - Click "Create"
 

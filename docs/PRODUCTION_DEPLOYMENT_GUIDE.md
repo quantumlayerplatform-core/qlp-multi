@@ -454,9 +454,9 @@ FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
 
 ## Support
 
-- **Documentation**: https://docs.quantumlayer.com
-- **Status Page**: https://status.quantumlayer.com
-- **Support Email**: support@quantumlayer.com
+- **Documentation**: https://docs.quantumlayerplatform.com
+- **Status Page**: https://status.quantumlayerplatform.com
+- **Support Email**: support@quantumlayerplatform.com
 - **Emergency**: Use PagerDuty integration
 
 ---

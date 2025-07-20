@@ -42,7 +42,7 @@ class ClerkAuthTester:
         try:
             # Create user
             request = operations.CreateUserRequestBody(
-                email_address=["test@quantumlayer.com"],
+                email_address=["test@quantumlayerplatform.com"],
                 first_name="Test",
                 last_name="User",
                 password="TestPassword123!",
